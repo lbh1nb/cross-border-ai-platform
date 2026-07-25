@@ -43,6 +43,9 @@ def test_refresh_token_on_expiry():
     auth._token = "old_token"
     auth._expires_at = 0.0  # 已过期
 
+    mock_request = httpx.Request(
+        "POST", "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
+    )
     mock_response = httpx.Response(
         200,
         json={
@@ -51,6 +54,7 @@ def test_refresh_token_on_expiry():
             "tenant_access_token": "new_token",
             "expire": 7200,
         },
+        request=mock_request,
     )
 
     with (
@@ -68,9 +72,13 @@ def test_api_error_raises_runtime_error():
     """飞书 API 返回非 0 code 时，应抛出 RuntimeError。"""
     auth = FeishuAuth()
 
+    mock_request = httpx.Request(
+        "POST", "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
+    )
     mock_response = httpx.Response(
         200,
         json={"code": 9999, "msg": "invalid app_id"},
+        request=mock_request,
     )
 
     with (
