@@ -29,6 +29,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+from src.feishu.application_bot import application_bot
 from src.feishu.card_templates import (
     build_approval_card,
     build_daily_report_card,
@@ -85,15 +86,27 @@ def test_daily_report_card_abnormal() -> bool:
 
 
 def test_approval_card() -> bool:
-    """测试4：发送审批卡片（带回调按钮）。
+    """测试4：发送审批卡片（带回调按钮，用应用机器人发送）。
 
-    注意：此卡片的"通过/拒绝"按钮使用 value 字段触发回调，
-    需要飞书应用机器人 + ngrok 配置才能真正接收回调。
-    仅 Webhook 自定义机器人时，点击会提示"应用未配置"。
+    审批卡片的"通过/拒绝"按钮使用 value 字段触发回调，
+    必须用应用机器人发送（Webhook 机器人不支持回调）。
+
+    前置条件：
+    1. 飞书开放平台启用应用机器人能力
+    2. 应用机器人已加入群聊
+    3. .env 配置 FEISHU_CHAT_ID
+    4. 事件订阅配置 card.action.trigger（回调地址指向 ngrok 公网 URL）
     """
-    print("\n[测试 4] 发送审批卡片（带回调按钮）...")
-    print("  注意：审批按钮需要飞书应用机器人 + ngrok 才能接收回调")
-    print("        若仅 Webhook 机器人，按钮点击会提示应用未配置")
+    print("\n[测试 4] 发送审批卡片（带回调按钮，用应用机器人）...")
+    if not application_bot.is_configured:
+        print("  [跳过] 应用机器人未配置 FEISHU_CHAT_ID")
+        print("  配置方法：")
+        print("    1. 飞书开放平台 → 应用功能 → 机器人 → 启用")
+        print("    2. 把应用机器人加入告警群")
+        print("    3. 群设置 → 群信息 → 复制 chat_id（oc_ 开头）")
+        print("    4. 在 .env 设置 FEISHU_CHAT_ID=oc_xxxxxxxx")
+        return False
+
     table_url = build_table_url()
     card = build_approval_card(
         biz_type="选品采购",
@@ -104,7 +117,7 @@ def test_approval_card() -> bool:
         operator="系统自动触发",
         table_url=table_url,
     )
-    return feishu_bot.send_card(card)
+    return application_bot.send_card(card)
 
 
 def test_inventory_alert_card() -> bool:

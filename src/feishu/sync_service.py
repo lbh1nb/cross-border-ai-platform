@@ -293,3 +293,18 @@ def create_inventory_sync_service() -> SyncService:
         table_id=settings.feishu_table_id_inventory,
         table_name="库存预警",
     )
+
+
+def create_daily_report_sync_service() -> SyncService:
+    """创建销售日报同步服务。
+
+    主键为"日期+平台"，同一日同一平台只有一条记录。
+    用于 seed_daily_report.py 脚本填充模拟数据。
+
+    注意：主键在调用 sync_records() 时通过 primary_keys 参数传入。
+    """
+    from src.config import settings
+    return SyncService(
+        table_id=settings.feishu_table_id_daily_report,
+        table_name="销售日报",
+    )

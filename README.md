@@ -6,7 +6,7 @@
 
 ## 📊 项目状态总览
 
-**当前进度**：第 2 周第 2 天（08-05），已完成 8 大功能模块
+**当前进度**：第 2 周第 3 天（08-05），已完成 8 大功能模块 + 一键部署方案
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
@@ -16,8 +16,9 @@
 | 数据增量同步 | ✅ 已完成 | 按主键去重，避免重复写入 |
 | 业务视图 | ✅ 已完成 | 3 个视图（销售总览/预警看板/选品决策） |
 | 数据自动清理 | ✅ 已完成 | 每3天凌晨2点自动清理旧数据 |
-| **交互卡片模板库** | ✅ 已完成 | 4 类卡片（库存/选品/日报/审批） |
-| **卡片按钮回调服务** | ✅ 已完成 | FastAPI 接收按钮点击回调 |
+| 交互卡片模板库 | ✅ 已完成 | 4 类卡片（库存/选品/日报/审批） |
+| 卡片按钮回调服务 | ✅ 已完成 | FastAPI 接收按钮点击回调 |
+| **一键部署方案** | ✅ 已完成 | 配置向导 + PyInstaller 打包 + 一键 bat |
 
 **测试覆盖**：129 个单元测试全部通过，覆盖率 62%
 
@@ -189,10 +190,11 @@ flowchart TB
 
 #### 第一步：请 IT/运维完成首次安装（一次性）
 
-IT/运维人员会在你的电脑上双击 `scripts\安装.bat` 完成全部安装：
-- 自动创建飞书业务视图
-- 自动配置开机自启
-- 自动启动后台调度器
+IT/运维人员会在你的电脑上双击 `scripts\一键安装.bat` 完成全部安装：
+- 自动创建虚拟环境 + 安装依赖
+- 自动启动配置向导（引导 IT 填写飞书凭证）
+- 自动创建飞书业务表 + 业务视图 + 采集配置
+- 自动配置开机自启 + 启动后台调度器
 
 #### 第二步：打开飞书查看数据
 
@@ -217,114 +219,112 @@ A：在飞书"采集配置"表中，停用默认家具配置，添加自己的�
 A：会。安装时已配置开机自启，电脑重启后调度器会自动后台运行。
 
 **Q：如何停止系统？**
-A：任务管理器 → 结束 `pythonw.exe` 进程。或双击 `scripts\卸载.bat` 彻底卸载。
+A：双击 `scripts\一键卸载.bat`，或任务管理器结束 `pythonw.exe` 进程。
 
 ---
 
-### IT/运维人员部署指南
+### IT/运维人员部署指南（3 种方式任选）
 
-#### 1. 环境要求
+#### 方式 1：一键 bat 脚本（推荐，最简单）
 
-- Python 3.11+
-- 飞书开放平台开发者账号（已创建自建应用）
+```bash
+# 1. 下载项目到目标电脑
+git clone https://github.com/lbh1nb/cross-border-ai-platform.git
+cd cross-border-ai-platform
 
-#### 2. 安装依赖
+# 2. 双击运行（或命令行执行）
+scripts\一键安装.bat
+```
+
+bat 脚本会自动完成：
+1. 检查 Python 环境
+2. 创建虚拟环境 + 安装依赖
+3. 启动配置向导（交互式引导填飞书凭证）
+4. 配置开机自启 + 启动调度器
+
+**适合场景**：目标电脑有 Python 3.11+，IT 人员不熟悉命令行。
+
+#### 方式 2：配置向导脚本（推荐，交互式引导）
 
 ```bash
 cd cross-border-ai-platform
-python -m venv .venv
-.venv\Scripts\activate        # Windows
-# source .venv/bin/activate   # macOS/Linux
-pip install -e ".[dev]"
+python scripts/setup_wizard.py
 ```
 
-#### 3. 配置环境变量
+配置向导会引导 IT 人员完成 11 步配置：
+
+| 步骤 | 操作 | 自动化程度 |
+|------|------|------------|
+| 1 | 检查 Python 环境 + 创建虚拟环境 + 安装依赖 | 全自动 |
+| 2 | 填写飞书 App ID / App Secret + 测试连接 | 半自动 |
+| 3 | 填写多维表格 App Token + 租户域名 | 手动填写 |
+| 4 | 创建 5 张业务表 | 全自动 |
+| 5 | 填写 5 张表的 Table ID | 手动填写 |
+| 6 | 写入 15 条采集配置 | 全自动 |
+| 7 | 创建 3 个业务视图 | 全自动 |
+| 8 | 填充销售日报模拟数据（测试用） | 全自动 |
+| 9 | 配置 Webhook 机器人（可选） | 半自动 |
+| 10 | 配置开机自启 | 全自动 |
+| 11 | 运行 129 个单元测试 | 全自动 |
+
+**适合场景**：IT 人员希望逐步控制每个环节，便于排查问题。
+
+#### 方式 3：PyInstaller 打包成 exe（无需 Python 环境）
 
 ```bash
-cp .env.example .env
-# 编辑 .env
+# 在开发机打包
+python scripts/build_exe.py
+
+# 把生成的 dist/cross-border-ai-setup.exe 复制到目标电脑
+# 双击运行即可
 ```
 
-**必填配置项**：
+打包后企业无需安装 Python 环境，双击 exe 即可启动配置向导。
 
-| 配置项 | 说明 | 获取方式 |
-|--------|------|----------|
-| `FEISHU_APP_ID` | 飞书应用 App ID | 飞书开放平台 → 应用详情 → 凭证与基础信息 |
-| `FEISHU_APP_SECRET` | 飞书应用 App Secret | 同上 |
-| `FEISHU_BITABLE_APP_TOKEN` | 多维表格 App Token | 多维表格 URL 中 `/base/` 后的部分 |
-| `FEISHU_TENANT_DOMAIN` | 飞书企业租户域名 | 多维表格 URL 中 `https://xxx.feishu.cn` 的 xxx 部分 |
-| `FEISHU_TABLE_ID_*` | 5 张业务表的 Table ID | 多维表格 URL 中 `?table=` 后的部分 |
+**适合场景**：目标电脑无法安装 Python（如受 IT 策略限制），或希望像商业软件一样分发。
 
-**可选配置项**：
+---
 
-| 配置项 | 默认 | 说明 |
-|--------|------|------|
-| `DATA_RETENTION_DAYS` | 3 | 数据保留天数 |
-| `FEISHU_WEBHOOK_URL` | 空 | Webhook 机器人地址（用于告警通知） |
+### 飞书应用前置准备（3 种方式都需要）
 
-#### 4. 配置 Webhook 机器人（用于告警通知）
+在运行部署脚本前，IT 人员需要先在飞书完成以下准备工作：
 
-1. 飞书桌面端 → 创建告警通知群 → 群设置 → 群机器人 → 添加机器人 → 自定义机器人
-2. 机器人名称：`AI 运营告警助手`
-3. 安全设置：自定义关键词 `库存 预警 选品 日报 AI 告警`
-4. 复制 Webhook 地址到 `.env` 的 `FEISHU_WEBHOOK_URL`
+#### 准备 1：创建飞书自建应用
 
-验证：`python scripts/test_bot.py`（看到 3 条测试消息即成功）
+1. 打开 https://open.feishu.cn/app
+2. 点击"创建企业自建应用"
+3. 填写应用名称（如"AI 运营中台"）和描述
+4. 进入应用 → 凭证与基础信息 → 复制 App ID 和 App Secret
 
-#### 5. 配置卡片按钮回调（用于审批按钮回调，可选）
+#### 准备 2：开通应用权限
 
-如需让"审批卡片"的"通过/拒绝"按钮触发回调，需配置应用机器人 + ngrok：
+进入应用 → 权限管理，开通以下权限：
+- `bitable:app`（多维表格读写）
+- `base:collaborator:create`（添加协作者）
+- `contact:user.id:readonly`（查询用户 ID）
 
-**5.1 启用飞书应用机器人能力**：
-1. 打开飞书开放平台 https://open.feishu.cn/app
-2. 选择你的自建应用
-3. 左侧菜单 → 应用功能 → 机器人 → 启用机器人能力
-4. 创建版本并发布，等管理员审核通过
+#### 准备 3：发布应用
 
-**5.2 订阅卡片回调事件**：
-1. 左侧菜单 → 事件与回调 → 事件配置
-2. 添加事件：`card.action.trigger`（卡片回传交互）
-3. 请求地址先留空（下一步用 ngrok 获取公网 URL 后再填）
+1. 创建版本 → 提交审核
+2. 管理员审核通过后应用才生效
 
-**5.3 启动本地回调服务**：
-```bash
-python scripts/start_callback_server.py
-```
-本地服务监听 `http://127.0.0.1:8000/callback`
+#### 准备 4：创建多维表格
 
-**5.4 启动 ngrok 内网穿透**：
-```bash
-# 首次使用需安装 ngrok（https://ngrok.com/download）
-# 首次使用需配置 token：ngrok authtoken <YOUR_TOKEN>
+1. 在飞书创建一个多维表格
+2. 从 URL 获取 App Token 和租户域名
+   - URL 格式：`https://xxx.feishu.cn/base/{APP_TOKEN}?table={TABLE_ID}`
+   - `xxx` 是租户域名（如 `ocndodd7lmyr`）
+   - `{APP_TOKEN}` 是多维表格 App Token
 
-python scripts/start_ngrok.py
-```
-脚本会输出公网 URL，如 `https://xxxx.ngrok-free.app`
+#### 准备 5：（可选）配置应用机器人（审批回调需要）
 
-**5.5 配置飞书回调地址**：
-- 回到飞书开放平台 → 事件与回调 → 事件配置
-- 请求地址填：`https://xxxx.ngrok-free.app/callback`
-- 点击"验证"，飞书会发送 challenge，本地服务返回后即验证通过
+如需使用审批卡片按钮回调功能：
+1. 应用功能 → 机器人 → 启用机器人能力
+2. 事件与回调 → 添加事件 `card.action.trigger`
+3. 把应用机器人加入告警群
+4. 从群设置获取 chat_id（`oc_` 开头）
 
-#### 6. 验证飞书连接
-
-```bash
-python -m src.feishu.auth
-# 看到 ✅ tenant_access_token 获取成功 即配置正确
-```
-
-#### 7. 运行测试
-
-```bash
-pytest
-# 看到 129 个测试全部通过即代码完整
-```
-
-#### 8. 交付给业务用户
-
-将整个项目文件夹交付给业务用户，告知：**双击 `scripts\安装.bat` 即可**。
-
-业务用户之后只需打开飞书表格查看数据，无需执行任何命令。
+详细操作步骤见配置向导脚本提示。
 
 ---
 
@@ -341,7 +341,8 @@ cross-border-ai-platform/
 │   ├── feishu/                # 飞书中台
 │   │   ├── auth.py            # 认证
 │   │   ├── bitable.py         # 多维表格 API
-│   │   ├── feishu_bot.py      # Webhook 机器人
+│   │   ├── feishu_bot.py      # Webhook 机器人（文本/富文本/卡片）
+│   │   ├── application_bot.py # 应用机器人（支持按钮回调，08-05 新增）
 │   │   ├── card_templates.py  # 卡片模板库（4 类卡片）
 │   │   ├── card_callback.py   # FastAPI 回调服务
 │   │   ├── sync_service.py    # 增量同步服务
@@ -359,10 +360,14 @@ cross-border-ai-platform/
 │       ├── cleanup_task.py    # 数据清理任务
 │       └── inventory_alert.py # 库存预警等级
 ├── scripts/                   # 运维脚本
-│   ├── 安装.bat / install.ps1 # 一键安装
-│   ├── 卸载.bat / uninstall.ps1 # 一键卸载
+│   ├── 一键安装.bat            # 业务用户双击即可安装（08-05 新增）
+│   ├── 一键卸载.bat            # 业务用户双击即可卸载（08-05 新增）
+│   ├── setup_wizard.py        # 交互式配置向导（11 步引导，08-05 新增）
+│   ├── build_exe.py           # PyInstaller 打包脚本（08-05 新增）
+│   ├── install.ps1 / uninstall.ps1 # 开机自启安装/卸载
 │   ├── init_tables.py         # 创建业务表
 │   ├── init_views.py          # 创建业务视图
+│   ├── seed_daily_report.py   # 生成销售日报模拟数据（08-05 新增）
 │   ├── start_scheduler.py     # 启动后台调度器
 │   ├── start_callback_server.py # 启动卡片回调服务
 │   ├── start_ngrok.py         # 启动 ngrok 内网穿透
@@ -456,6 +461,9 @@ curl -X POST http://127.0.0.1:8000/callback \
 - [x] 交互卡片模板库（库存预警/选品报告/销售日报/审批 4 类卡片）
 - [x] 卡片按钮回调服务（FastAPI 接收 card.action.trigger 事件）
 - [x] 链接跳转优化（用企业租户域名，飞书桌面端直接打开不跳浏览器）
+- [x] **一键部署方案（配置向导 + PyInstaller 打包 + 一键 bat 脚本）**
+- [x] **销售日报模拟数据生成（21 条 7 天数据，含异常用例）**
+- [x] **应用机器人支持（审批卡片用应用机器人发送，支持按钮回调）**
 
 完整计划见 [28天实施计划.md](file:///d:\ai\07-26\28天实施计划.md)
 

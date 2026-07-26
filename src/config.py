@@ -37,6 +37,10 @@ class Settings(BaseSettings):
 
     # 飞书机器人
     feishu_webhook_url: str = Field(default="", description="Webhook 机器人地址")
+    feishu_chat_id: str = Field(
+        default="",
+        description="飞书群聊 ID（应用机器人发送审批卡片等需回调的消息）",
+    )
 
     # AI 模型
     openai_api_key: str = Field(default="", description="OpenAI API Key")
