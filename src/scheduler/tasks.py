@@ -111,7 +111,7 @@ def _collect_one_config(
     cleaner: DataCleaner,
     sync_service,
     config: dict[str, Any],
-) -> SyncResult:
+) -> tuple[SyncResult, list[dict]]:
     """根据单条配置执行采集 → 清洗 → 同步写入。
 
     使用增量同步：按 ASIN+平台 去重，存在则更新，不存在则新增。
@@ -123,7 +123,8 @@ def _collect_one_config(
         config: 单条配置（含 category/platform/count）
 
     Returns:
-        同步结果统计
+        (同步结果统计, 本次处理的飞书记录列表)
+        记录列表用于后续事件驱动审批触发
     """
     category = config["category"]
     platform = config["platform"]
@@ -135,7 +136,7 @@ def _collect_one_config(
     raw_products = collector.collect(category, limit=count, platform=platform)
     if not raw_products:
         logger.warning(f"  [{category}] @ [{platform}] 采集到 0 条")
-        return SyncResult(table_name="选品池")
+        return SyncResult(table_name="选品池"), []
 
     # 清洗
     cleaned = cleaner.clean(raw_products)
@@ -146,14 +147,19 @@ def _collect_one_config(
 
     # 增量同步写入
     if not cleaned:
-        return SyncResult(table_name="选品池")
+        return SyncResult(table_name="选品池"), []
     result = sync_service.sync_products(cleaned)
     logger.info(
         f"  [{category}] @ [{platform}] 同步: "
         f"新增 {result.new_count} / 更新 {result.update_count} / "
         f"跳过 {result.skip_count} / 失败 {result.fail_count}"
     )
-    return result
+    # 把清洗后的商品转成飞书记录格式，供审批触发用
+    synced_records = [
+        {"fields": p.to_record() if hasattr(p, "to_record") else p.__dict__}
+        for p in cleaned
+    ]
+    return result, synced_records
 
 
 def product_collection_task() -> int:
@@ -191,15 +197,17 @@ def product_collection_task() -> int:
         total_update = 0
         success_count = 0
         fail_count = 0
+        all_synced_records: list[dict] = []  # 收集本次所有同步的记录，供审批触发用
 
         for config in configs:
             try:
-                result = _collect_one_config(
+                result, synced_records = _collect_one_config(
                     collector, cleaner, sync_service, config
                 )
                 total_new += result.new_count
                 total_update += result.update_count
                 success_count += 1
+                all_synced_records.extend(synced_records)
             except Exception as e:
                 fail_count += 1
                 logger.error(
@@ -217,6 +225,21 @@ def product_collection_task() -> int:
             f"新增 {total_new} / 更新 {total_update} / "
             f"总处理 {total_processed} 条"
         )
+
+        # 事件驱动：采集完成后触发审批规则匹配
+        if all_synced_records:
+            try:
+                from src.scheduler.approval_task import trigger_approval_for_records
+                from src.gui.services.approval_rules_service import EVENT_PRODUCT_COLLECTED
+
+                triggered = trigger_approval_for_records(
+                    EVENT_PRODUCT_COLLECTED, all_synced_records
+                )
+                if triggered > 0:
+                    logger.info(f"采集后自动触发审批: {triggered} 条")
+            except Exception as e:
+                logger.error(f"采集后审批触发失败: {e}", exc_info=True)
+
         return total_processed
 
     except Exception as e:
@@ -342,6 +365,8 @@ def inventory_check_task() -> int:
 
         updated_count = 0
         alert_sent_count = 0
+        alert_records: list[dict] = []  # 收集紧急/预警记录，供审批触发用
+
         for record in records:
             try:
                 updated, new_level = _process_one_inventory_record(table_id, record)
@@ -349,6 +374,7 @@ def inventory_check_task() -> int:
                     updated_count += 1
                     if new_level in ("紧急", "预警"):
                         alert_sent_count += 1
+                        alert_records.append(record)
             except Exception as e:
                 logger.error(
                     f"处理库存记录失败 record_id={record.get('record_id')}: {e}",
@@ -359,6 +385,21 @@ def inventory_check_task() -> int:
             f"定时任务 [库存检查] 完成: 检查 {len(records)} 条, "
             f"更新 {updated_count} 条, 发送告警 {alert_sent_count} 条"
         )
+
+        # 事件驱动：库存预警触发后调用审批规则匹配
+        if alert_records:
+            try:
+                from src.scheduler.approval_task import trigger_approval_for_records
+                from src.gui.services.approval_rules_service import EVENT_INVENTORY_ALERT
+
+                triggered = trigger_approval_for_records(
+                    EVENT_INVENTORY_ALERT, alert_records
+                )
+                if triggered > 0:
+                    logger.info(f"库存预警后自动触发审批: {triggered} 条")
+            except Exception as e:
+                logger.error(f"库存预警后审批触发失败: {e}", exc_info=True)
+
         return len(records)
 
     except Exception as e:

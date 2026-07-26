@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -65,6 +66,11 @@ def build_exe() -> bool:
         "--hidden-import", "loguru",
         "--hidden-import", "pydantic",
         "--hidden-import", "pydantic_settings",
+        "--hidden-import", "uvicorn",
+        "--hidden-import", "fastapi",
+        # 把业务用户操作手册打包到 exe 同目录
+        "--add-data",
+        f"{PROJECT_ROOT / 'docs' / '业务用户操作手册.md'}{os.pathsep}.",
         # 工作目录
         "--distpath", str(dist_dir),
         "--workpath", str(build_dir),

@@ -108,27 +108,38 @@ def query_approval_detail(approval_code: str) -> dict[str, Any]:
         return {}
 
 
-def extract_approval_config(approval_detail: dict[str, Any]) -> dict[str, str]:
+def extract_approval_config(approval_detail: dict[str, Any]) -> dict[str, Any]:
     """从审批定义详情中提取 GUI 需要的配置信息。
 
     Args:
         approval_detail: query_approval_detail 返回的详情
 
     Returns:
-        配置字典，含 approval_code / approval_name / node_id / field_count
+        配置字典，含：
+        - approval_code: 审批定义 Code
+        - approval_name: 审批定义名称
+        - node_id: 审批节点 ID
+        - field_count: 表单字段数
+        - field_ids: 表单字段 ID 字典（键为字段名，值为 widget ID）
     """
     import json
 
     approval_code = approval_detail.get("approval_code", "")
     approval_name = approval_detail.get("approval_name", "")
 
-    # 解析表单字段
+    # 解析表单字段，提取字段名 → widget ID 的映射
     form_str = approval_detail.get("form", "")
     field_count = 0
+    field_ids: dict[str, str] = {}
     if form_str:
         try:
             fields = json.loads(form_str)
             field_count = len(fields)
+            for field in fields:
+                field_name = field.get("name", "")
+                widget_id = field.get("id", "")
+                if field_name and widget_id:
+                    field_ids[field_name] = widget_id
         except json.JSONDecodeError:
             pass
 
@@ -154,6 +165,7 @@ def extract_approval_config(approval_detail: dict[str, Any]) -> dict[str, str]:
         "approval_name": approval_name,
         "node_id": node_id,
         "field_count": str(field_count),
+        "field_ids": field_ids,
     }
 
 

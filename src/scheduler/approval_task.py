@@ -1,184 +1,119 @@
-"""审批流自动触发任务。
+"""审批流事件驱动触发器（08-07 重构）。
 
-业务场景：
-    选品池中出现金额 > 5000 美金的采购需求时，
-    自动调用飞书审批流 API 创建审批实例，
-    主管在飞书审批中心通过/拒绝后回写多维表格"审批状态"字段。
+旧版（08-06）是定时任务，每天 10:00 扫描选品池，只能配一个审批流。
+新版（08-07）改成事件驱动：业务任务（选品采集/库存预警）完成后，
+直接调用 trigger_approval_for_records()，传入刚处理的记录列表，
+由 approval_rules_service.match_and_trigger() 匹配所有启用的规则，
+匹配条件的记录自动创建审批实例。
 
-触发条件：
-    每天上午 10:00 扫描选品池表，
-    筛选"采购金额 > 阈值且审批状态为空或未触发"的记录，
-    为每条记录创建一个飞书审批实例。
+支持多审批流：每个规则可绑定不同的飞书审批定义和触发条件。
 
-与 08-05 卡片审批的区别：
-    - 08-05 卡片审批：群内点按钮即通过，适合轻量场景
-    - 08-06 审批流：飞书审批中心走完整流程，可多级审批、有审批历史
+保留 auto_approval_trigger_task() 作为兜底定时任务（每天 10:00），
+扫描选品池补触发遗漏的记录（如手动添加的、规则新增后历史记录未触发的）。
 """
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any
-
-from src.config import settings
 from src.observability.logger import get_logger
-from src.scheduler.tasks import _extract_field_value
 
 logger = get_logger()
 
 
-def _extract_amount(field_value: Any) -> float:
-    """从飞书字段值中提取采购金额（兼容数字、文本、列表格式）。
+def trigger_approval_for_records(
+    event_type: str,
+    records: list[dict],
+) -> int:
+    """事件驱动审批触发（业务任务调用入口）。
 
-    飞书金额字段返回格式：
-    - 数字：8500.0
-    - 文本：[{"text": "8500"}]
-    - 空值：None
+    选品采集任务 / 库存预警任务完成后调用本函数，
+    自动匹配所有启用的审批规则，符合条件的记录创建飞书审批实例。
 
     Args:
-        field_value: 飞书返回的字段原始值
+        event_type: 触发事件类型
+            - "product_collected"：选品采集完成
+            - "inventory_alert"：库存预警触发
+        records: 触发事件的记录列表（飞书表格记录格式，含 fields）
 
     Returns:
-        金额浮点数，解析失败返回 0.0
+        成功创建的审批实例数量
+
+    示例：
+        # 选品采集完成后
+        trigger_approval_for_records("product_collected", new_records)
+
+        # 库存预警检查完成后，对紧急/预警的记录
+        trigger_approval_for_records("inventory_alert", alert_records)
     """
-    if field_value is None:
-        return 0.0
-    if isinstance(field_value, (int, float)):
-        return float(field_value)
-    if isinstance(field_value, str):
-        try:
-            return float(field_value)
-        except ValueError:
-            return 0.0
-    if isinstance(field_value, list):
-        if not field_value:
-            return 0.0
-        first = field_value[0]
-        if isinstance(first, dict):
-            text = first.get("text") or first.get("name") or ""
-            try:
-                return float(text)
-            except (ValueError, TypeError):
-                return 0.0
-        try:
-            return float(first)
-        except (ValueError, TypeError):
-            return 0.0
-    return 0.0
+    if not records:
+        return 0
+
+    try:
+        from src.gui.services.approval_rules_service import match_and_trigger
+
+        triggered = match_and_trigger(event_type, records)
+        if triggered > 0:
+            logger.info(
+                f"事件驱动审批触发: 事件={event_type}, "
+                f"记录数={len(records)}, 创建审批={triggered} 条"
+            )
+        return triggered
+    except Exception as e:
+        logger.error(
+            f"事件驱动审批触发失败: 事件={event_type}, 错误={e}",
+            exc_info=True,
+        )
+        return 0
 
 
 def auto_approval_trigger_task() -> int:
-    """审批流自动触发任务。
+    """兜底定时审批触发任务（每天 10:00）。
 
-    扫描选品池表，筛选金额超过阈值且未触发过审批的记录，
-    为每条记录创建一个飞书审批实例。
+    扫描选品池 + 库存预警表，对每条记录检查所有启用的审批规则，
+    匹配条件且未触发过审批的记录创建审批实例。
+
+    作用：补触发事件驱动遗漏的记录（如手动添加的、规则新增后历史记录）。
 
     Returns:
         成功创建的审批实例数量
     """
     logger.info("=" * 50)
-    logger.info("定时任务 [审批流自动触发] 开始执行")
+    logger.info("兜底任务 [审批流定时扫描] 开始执行")
     logger.info("=" * 50)
 
     try:
-        from src.feishu.approval import approval_client
+        from src.config import settings
         from src.feishu.bitable import bitable_client
+        from src.gui.services.approval_rules_service import (
+            EVENT_INVENTORY_ALERT,
+            EVENT_PRODUCT_COLLECTED,
+            match_and_trigger,
+        )
 
-        # 检查审批流是否已配置
-        if not approval_client.is_configured:
-            logger.warning(
-                "审批流未完整配置，跳过自动触发。"
-                "请在 .env 中设置 FEISHU_APPROVAL_CODE / "
-                "FEISHU_APPROVAL_APPROVER_OPEN_ID / FEISHU_APPROVAL_NODE_ID"
-            )
-            return 0
+        total_triggered = 0
 
-        table_id = settings.feishu_table_id_inventory
-        if not table_id:
-            logger.error("库存预警表 ID 未配置，无法扫描")
-            return 0
+        # 1. 扫描选品池表
+        selection_table_id = settings.feishu_table_id_selection
+        if selection_table_id:
+            records = bitable_client.query_records(selection_table_id)
+            if records:
+                triggered = match_and_trigger(EVENT_PRODUCT_COLLECTED, records)
+                total_triggered += triggered
+                logger.info(f"选品池扫描: {len(records)} 条记录, 触发 {triggered} 条审批")
 
-        threshold = settings.purchase_approval_threshold
-        logger.info(f"扫描选品池，筛选金额 > ${threshold:,.2f} 的记录")
-
-        # 查询所有库存预警记录
-        records = bitable_client.query_records(table_id)
-        if not records:
-            logger.info("库存预警表为空，本次不触发审批")
-            return 0
-
-        triggered_count = 0
-        skipped_count = 0
-
-        for record in records:
-            try:
-                fields = record.get("fields", {})
-                asin = _extract_field_value(fields.get("ASIN"))
-                product_name = _extract_field_value(
-                    fields.get("商品名称"), default="未命名商品"
-                )
-                amount = _extract_amount(fields.get("采购金额"))
-                current_status = _extract_field_value(fields.get("审批状态"))
-
-                # 跳过金额不足阈值的记录
-                if amount <= threshold:
-                    continue
-
-                # 跳过已触发过审批的记录（避免重复创建）
-                if current_status and current_status != "未触发":
-                    skipped_count += 1
-                    continue
-
-                if not asin:
-                    logger.warning(f"记录缺少 ASIN，跳过: record_id={record.get('record_id')}")
-                    continue
-
-                # 创建飞书审批实例
-                description = (
-                    f"自动触发：采购金额 ${amount:,.2f} 超过阈值 ${threshold:,.2f}。"
-                    f"商品：{product_name}（ASIN: {asin}）"
-                )
-
-                instance_code = approval_client.create_approval_instance(
-                    asin=asin,
-                    product_name=product_name,
-                    amount=amount,
-                    biz_type="选品采购",
-                    description=description,
-                )
-
-                if instance_code:
-                    triggered_count += 1
-                    logger.info(
-                        f"已创建审批实例: ASIN={asin}, 金额=${amount:,.2f}, "
-                        f"instance_code={instance_code}"
-                    )
-
-                    # 把审批实例 Code 回写到多维表格，便于后续关联查询
-                    bitable_client.update_record(
-                        table_id,
-                        record.get("record_id"),
-                        {
-                            "审批状态": "审批中",
-                            "更新时间": int(datetime.now().timestamp() * 1000),
-                        }
-                    )
-                else:
-                    logger.error(f"创建审批实例失败: ASIN={asin}")
-
-            except Exception as e:
-                logger.error(
-                    f"处理记录失败 record_id={record.get('record_id')}: {e}",
-                    exc_info=True,
-                )
+        # 2. 扫描库存预警表
+        inventory_table_id = settings.feishu_table_id_inventory
+        if inventory_table_id:
+            records = bitable_client.query_records(inventory_table_id)
+            if records:
+                triggered = match_and_trigger(EVENT_INVENTORY_ALERT, records)
+                total_triggered += triggered
+                logger.info(f"库存预警扫描: {len(records)} 条记录, 触发 {triggered} 条审批")
 
         logger.info(
-            f"定时任务 [审批流自动触发] 完成: "
-            f"扫描 {len(records)} 条, 触发 {triggered_count} 条, "
-            f"跳过已审批 {skipped_count} 条"
+            f"兜底任务 [审批流定时扫描] 完成: 共触发 {total_triggered} 条审批"
         )
-        return triggered_count
+        return total_triggered
 
     except Exception as e:
-        logger.error(f"定时任务 [审批流自动触发] 失败: {e}", exc_info=True)
+        logger.error(f"兜底任务 [审批流定时扫描] 失败: {e}", exc_info=True)
         return 0

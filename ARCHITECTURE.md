@@ -328,32 +328,45 @@ sequenceDiagram
 - 内置 2 个 action 处理器：`approve`（审批通过）/ `reject`（审批拒绝）
 - 内置审批状态变更处理器（08-06 新增）：异步回写多维表格"审批状态"字段，失败时通过应用机器人发告警消息到飞书群
 
-**飞书审批流自动化**（approval.py + approval_task.py，08-06 新增）：
+**多审批流规则引擎**（approval_rules_service.py + approval_task.py）：
 
 ```mermaid
 sequenceDiagram
-    participant Sched as 调度器<br/>(每天10:00)
-    participant Trigger as 审批触发任务
+    participant Task as 业务任务<br/>(选品采集/库存预警)
+    participant Rules as 规则引擎<br/>(approval_rules_service)
+    participant JSON as rules.json
     participant Approval as 飞书审批API
     participant Mgr as 主管
     participant Callback as 回调服务
     participant Bitable as 多维表格
 
-    Sched->>Trigger: 触发 auto_approval_trigger_task
-    Trigger->>Bitable: 查询选品池金额>5000的记录
-    Bitable-->>Trigger: 返回待审批记录
-    Trigger->>Approval: create_approval_instance
-    Approval-->>Trigger: 返回 instance_code
-    Trigger->>Bitable: 更新审批状态为"审批中"
+    Task->>Rules: trigger_approval_for_records(event, records)
+    Rules->>JSON: 加载所有规则
+    Rules->>Rules: 逐条匹配: 事件类型 + 条件(字段+操作符+阈值)
+    loop 命中规则
+        Rules->>Approval: create_approval_instance(规则配置)
+        Approval-->>Rules: 返回 instance_code
+        Rules->>Bitable: 更新审批状态为"审批中"
+    end
     Mgr->>Approval: 在飞书审批中心通过/拒绝
     Approval->>Callback: 推送 approval_instance 事件
     Callback->>Approval: 查询审批实例详情(提取ASIN)
     Callback->>Bitable: 异步回写"审批状态"字段
 ```
 
+**触发方式**：
+- **事件驱动**（主）：业务任务跑完后立即调用规则引擎，对本次记录匹配规则
+- **每小时兜底**（辅）：补触发事件驱动遗漏的记录（手动新增的、规则新增后的历史记录）
+
+**规则存储**：JSON 文件 `data/approval_rules.json`，每个规则独立配置：
+- 审批定义（approval_code + 字段 ID + 节点 ID + 审批人）
+- 触发事件（选品采集完成 / 库存预警触发）
+- 触发条件（字段 + 操作符 + 阈值，如 `利润空间 > 5000`）
+
 **审批流模块**：
-- `src/feishu/approval.py` — 飞书审批流 API 客户端（创建/查询审批实例）
-- `src/scheduler/approval_task.py` — 自动触发任务（扫描选品池，金额>阈值自动创建审批）
+- `src/feishu/approval.py` — 飞书审批流 API 客户端（支持动态传入 approval_code/node_id/字段ID）
+- `src/scheduler/approval_task.py` — 事件驱动触发入口 + 每小时兜底扫描
+- `src/gui/services/approval_rules_service.py` — 多审批流规则引擎（CRUD + 条件匹配 + 事件触发）
 - `scripts/query_approval_definition.py` — 查询审批定义表单结构工具
 
 **部署要求**：
@@ -361,28 +374,29 @@ sequenceDiagram
 - 本地开发用 ngrok 内网穿透（`scripts/start_ngrok.py`）
 - 生产环境部署到云服务器（第4周 Docker 化）
 
-### 2.6 桌面 GUI 层（src/gui/，08-07 新增）
+### 2.6 桌面 GUI 层（src/gui/）
 
-**PySide6 桌面应用**，业务用户无需接触代码即可完成所有操作。
+**PySide6 桌面应用**，业务用户无需接触代码即可完成所有操作。采用现代简约白底风格：卡片化布局、圆角阴影、蓝色主题、清晰视觉层次。
 
 ```mermaid
 flowchart TB
-    subgraph 主窗口
-        A[MainWindow<br/>侧边栏 + QStackedWidget]
+    subgraph 主窗口[主窗口 - 现代简约白底]
+        A[MainWindow<br/>白底侧边栏 + QStackedWidget]
     end
 
     subgraph 四大页面
-        B[ConfigPage<br/>配置面板]
-        C[ApprovalPage<br/>审批流管理]
-        D[TaskPage<br/>任务控制]
+        B[ConfigPage<br/>配置面板 + 字段说明]
+        C[ApprovalPage<br/>向导式新建规则]
+        D[TaskPage<br/>双选项卡日志]
         E[DashboardPage<br/>数据看板]
     end
 
     subgraph 服务层
         F[EnvService<br/>.env 读写]
-        G[ApprovalService<br/>审批流扫描/启用]
-        H[SchedulerThread<br/>后台调度器]
-        I[BitableClient<br/>飞书表格读取]
+        G[ApprovalService<br/>审批定义扫描]
+        H[SchedulerThread<br/>BackgroundScheduler]
+        I[ApprovalRulesService<br/>规则引擎 + JSON 存储]
+        J[BitableClient<br/>飞书表格读取]
     end
 
     A --> B
@@ -391,64 +405,190 @@ flowchart TB
     A --> E
     B --> F
     C --> G
+    C --> I
     D --> H
-    E --> I
+    E --> J
 
     style A fill:#2d5a3d,color:#fff
     style C fill:#5a3d2d,color:#fff
     style F fill:#2d3a5a,color:#fff
     style G fill:#2d3a5a,color:#fff
+    style I fill:#5a2d4a,color:#fff
 ```
 
 **GUI 模块结构**：
-- `src/gui/main.py` — GUI 入口（QApplication + 全局样式）
-- `src/gui/main_window.py` — 主窗口（侧边栏 + 4 页面切换）
-- `src/gui/pages/config_page.py` — 配置面板（飞书凭证/表 ID/审批人 → .env）
-- `src/gui/pages/approval_page.py` — 审批流管理（扫描飞书审批定义 → 一键启用）
-- `src/gui/pages/task_page.py` — 任务控制（启停调度器 + 实时日志）
+- `src/gui/main.py` — GUI 入口（QApplication + 全局样式：现代简约白底）
+- `src/gui/main_window.py` — 主窗口（白底侧边栏 + 7 页面切换）
+- `src/gui/pages/setup_wizard_page.py` — 部署向导（7 步引导业务用户完成部署，v0.4.0 新增）
+- `src/gui/pages/config_page.py` — 配置面板（每字段带说明和获取指引 → .env）
+- `src/gui/pages/approval_page.py` — 审批流管理（向导式新建规则 + 规则列表 CRUD + 扫描原理说明）
+- `src/gui/pages/task_page.py` — 任务控制（双选项卡日志 + BackgroundScheduler + 回调服务 + 公网隧道 + HTML 指引卡片）
 - `src/gui/pages/dashboard_page.py` — 数据看板（选品池 + 库存预警表格）
+- `src/gui/pages/health_check_page.py` — 健康检查页（6 项配置就绪检测，v0.4.0 新增）
+- `src/gui/pages/manual_page.py` — 操作手册页（内置业务用户操作手册，v0.4.0 新增）
 - `src/gui/services/env_service.py` — .env 配置读写服务
-- `src/gui/services/approval_service.py` — 审批流扫描/查询/启用服务
+- `src/gui/services/approval_service.py` — 审批定义扫描/查询服务
+- `src/gui/services/approval_rules_service.py` — 多审批流规则引擎（JSON 存储 + 事件触发）
+- `src/gui/services/callback_server_thread.py` — 飞书回调服务线程封装（FastAPI + uvicorn，v0.4.0 新增）
+- `src/gui/services/cloudflare_tunnel_thread.py` — Cloudflare 公网隧道线程封装（自动下载 cloudflared，v0.4.0 新增）
+- `src/gui/services/cloudflared_downloader.py` — cloudflared 二进制下载器（v0.4.0 新增）
+- `src/gui/services/health_check_service.py` — 健康检查服务（6 项检测，v0.4.0 新增）
+- `src/gui/services/init_data_service.py` — 一键初始化数据服务（建表 + 采集配置 + 视图 + 权限，v0.4.0 新增）
+- `src/gui/services/approver_search_service.py` — 审批人搜索服务（按姓名查 open_id，v0.4.0 新增）
+- `src/gui/services/chat_search_service.py` — 群聊搜索服务（按名称查 chat_id，v0.4.0 新增）
+- `src/gui/widgets/approver_search_dialog.py` — 审批人搜索对话框组件（v0.4.0 新增）
+- `src/gui/widgets/chat_search_dialog.py` — 群聊搜索对话框组件（v0.4.0 新增）
 
-**审批流自动检测机制**：
+**审批流规则向导式创建**：
 
 ```mermaid
 sequenceDiagram
     participant User as 业务用户
-    participant GUI as GUI 审批流管理
-    participant ScanThread as 扫描线程
+    participant Dialog as 新建规则对话框
+    participant ScanThread as 自动扫描线程
     participant Feishu as 飞书 API
-    participant Env as .env 文件
+    participant Rules as 规则引擎(JSON)
 
-    User->>GUI: 点"扫描审批定义"
-    GUI->>ScanThread: 启动后台线程
+    User->>Dialog: 点"➕ 新建审批规则"
+    Dialog->>ScanThread: 启动自动扫描
     ScanThread->>Feishu: POST /approvals（列出所有审批定义）
     Feishu-->>ScanThread: 返回审批定义列表
-    ScanThread->>GUI: 信号通知（列表数据）
-    GUI->>User: 显示审批定义列表
+    ScanThread-->>Dialog: 自动填充下拉框
 
-    User->>GUI: 选中一个审批定义
-    GUI->>Feishu: GET /approvals/{code}（查详情）
-    Feishu-->>GUI: 返回表单字段 ID + 节点 ID
-    GUI->>User: 显示详情
+    User->>Dialog: 选审批定义 + 选触发事件 + 配条件(字段+操作符+阈值)
+    Dialog->>Feishu: GET /approvals/{code}（查字段 ID 和节点 ID）
+    Feishu-->>Dialog: 返回字段 ID + 节点 ID + 审批人
 
-    User->>GUI: 点"启用此审批流"
-    GUI->>Env: 写入 APPROVAL_CODE / NODE_ID / APPROVER_OPEN_ID
-    Env-->>GUI: 写入成功
-    GUI->>User: 显示"已启用 ✓"
+    User->>Dialog: 点"保存"
+    Dialog->>Rules: add_rule(rule_dict)
+    Rules->>Rules: 写入 data/approval_rules.json
+    Rules-->>Dialog: 返回 rule_id
+    Dialog-->>User: 显示"规则已保存"
+```
+
+**双选项卡日志系统**：
+
+```mermaid
+flowchart LR
+    A[业务任务执行] --> B[logger 输出日志]
+    B --> C[写入 logs/app.log]
+    C --> D[QTimer 每秒读取]
+    D --> E{选项卡路由}
+    E -->|业务日志 tab| F[关键词过滤<br/>只保留: 采集了X个/触发X条/预警X条]
+    E -->|技术日志 tab| G[完整日志<br/>含 DEBUG/INFO/WARNING/ERROR]
+
+    style A fill:#2d5a3d,color:#fff
+    style F fill:#2d3a5a,color:#fff
+    style G fill:#5a2d2d,color:#fff
 ```
 
 **多线程设计**：
 - 所有飞书 API 调用都在 QThread 后台执行，避免阻塞 UI
-- 调度器在独立 QThread 运行，GUI 主线程保持响应
+- 调度器用 `BackgroundScheduler`（start() 立即返回）封装在 `SchedulerThread` 中，GUI 主线程保持响应
 - 日志刷新用 QTimer 每秒读取日志文件
+- 业务日志通过关键词过滤技术噪音，仅保留"采集了X个商品""触发X条审批"等大白话消息
 
-**PyInstaller 打包**（08-07 新增）：
+---
+
+## 七、部署向导 + 回调服务架构（v0.4.0 新增）
+
+### 7.1 部署向导（7 步引导业务用户完成部署）
+
+业务用户首次使用软件时，跟着向导走 7 步即可完成部署，全程不接触代码。
+
+```mermaid
+flowchart LR
+    A[① 欢迎页] --> B[② 创建飞书应用]
+    B --> C[③ 填写凭证]
+    C --> D[④ 一键初始化数据]
+    D --> E[⑤ 启动回调服务]
+    E --> F[⑥ 启动公网隧道]
+    F --> G[⑦ 健康检查]
+
+    style A fill:#2d5a3d,color:#fff
+    style D fill:#4a3d2d,color:#fff
+    style E fill:#5a2d2d,color:#fff
+    style F fill:#5a2d2d,color:#fff
+    style G fill:#2d3a5a,color:#fff
+```
+
+**关键设计**：
+- 每步只做一件事，说人话，给操作按钮
+- 步骤⑤⑥用快递类比解释回调服务和公网隧道的作用（回调服务=快递接收员、公网隧道=门牌号、请求地址=收件地址）
+- 步骤④一键初始化：建 4 张业务表 + 1 张采集配置表 + 3 个业务视图 + 表格权限，10-30 秒完成
+- 步骤⑦健康检查：6 项配置就绪检测（凭证/表格/表配置/权限/回调服务/公网隧道）
+
+### 7.2 回调服务 + 公网隧道（替代 ngrok，业务用户零配置）
+
+```mermaid
+flowchart LR
+    A[飞书服务器] -->|推送事件| B[公网 URL<br/>xxx.trycloudflare.com]
+    B -->|Cloudflare Tunnel| C[本地 8000 端口<br/>FastAPI 回调服务]
+    C -->|解析事件| D{事件类型}
+    D -->|URL 验证| E[返回 challenge]
+    D -->|卡片按钮点击| F[异步回写多维表格]
+    D -->|审批状态变更| G[异步回写审批状态]
+
+    style A fill:#5a2d2d,color:#fff
+    style B fill:#2d4a5a,color:#fff
+    style C fill:#2d5a3d,color:#fff
+    style F fill:#2d3a5a,color:#fff
+    style G fill:#2d3a5a,color:#fff
+```
+
+**回调服务（`src/feishu/card_callback.py` + `src/gui/services/callback_server_thread.py`）**：
+- 基于 FastAPI 实现，监听 `http://0.0.0.0:8000/callback`
+- 封装为 `CallbackServerThread(QThread)`，GUI 点按钮即可启动/停止，无需开终端
+- 用 `uvicorn.Config + uvicorn.Server` 方式，通过 `should_exit=True` 优雅停止
+- 兼容飞书 schema 1.0 和 2.0 两种回调格式
+- 支持 3 类事件：URL 验证、`card.action.trigger`（卡片按钮点击）、`approval_instance`（审批状态变更）
+- 异步回写策略：用 `asyncio.create_task` + `run_in_executor` 避免飞书 3 秒超时
+
+**公网隧道（`src/gui/services/cloudflare_tunnel_thread.py` + `cloudflared_downloader.py`）**：
+- 用 Cloudflare Tunnel 替代 ngrok，免费且无需注册
+- 首次使用自动下载 `cloudflared`（约 50MB）到 exe 同目录，无需手动安装
+- 启动后自动提取公网 URL（形如 `xxx.trycloudflare.com`）
+- 启动成功后**自动复制完整回调地址**（`公网 URL + /callback`）到剪贴板
+- 在 GUI 渲染**蓝色 HTML 指引卡片**，列出飞书后台两处填写位置的完整路径：
+  - ① 事件配置（接收审批状态变更）
+  - ② 卡片回传交互（接收审批卡片按钮点击）
+
+### 7.3 审批扫描机制（`src/gui/services/approval_service.py`）
+
+业务用户在飞书审批后台创建审批定义后，GUI 自动扫描获取，无需手动复制 approval_code。
+
+```mermaid
+sequenceDiagram
+    participant User as 业务用户
+    participant GUI as 审批流管理页
+    participant ScanThread as 扫描线程
+    participant Auth as 飞书认证
+    participant API as 飞书审批 API
+
+    User->>GUI: 点"➕ 新建审批规则"
+    GUI->>ScanThread: 启动自动扫描
+    ScanThread->>Auth: 用 App ID/Secret 换 tenant_access_token
+    Auth-->>ScanThread: 返回 token
+    ScanThread->>API: POST /approval/v4/approvals（拉取所有已发布审批定义）
+    API-->>ScanThread: 返回审批定义列表
+    ScanThread-->>GUI: 显示列表供用户选择
+    User->>GUI: 点选一个审批定义
+    GUI->>API: GET /approval/v4/approvals/{code}（查字段 ID 和节点 ID）
+    API-->>GUI: 返回表单字段 ID + 审批节点 ID
+    GUI->>GUI: 写入 .env，规则保存生效
+```
+
+**扫描前置条件**（扫不到的 3 个常见原因）：
+1. 审批定义已发布（草稿扫不到）
+2. 应用拥有 `approval:approval` 权限
+3. 凭证已保存（系统拿不到 token 就调不了 API）
+
+**PyInstaller 打包**：
 - `scripts/build_exe.py` — 打包脚本
 - 输出 `dist/跨境电商AI运营中台.exe`（约 80-120MB）
 - 用 `--onefile` 打包成单文件，用户双击即用
 - 用 `--windowed` 隐藏控制台窗口
-- 用 `--collect-all PySide6` 收集 Qt 所有依赖
+- 用 `--collect-submodules src` 收集所有 src 子模块
 
 ## 三、数据流
 

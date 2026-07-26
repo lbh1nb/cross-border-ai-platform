@@ -17,6 +17,8 @@ API 文档：
     - 选品池金额 > 5000 美金自动触发采购审批
     - 库存紧急补货审批
     - 其他需多级审批的业务场景
+
+08-07 升级：支持多审批流，每个规则可传自己的 approval_code/node_id/字段ID
 """
 
 from __future__ import annotations
@@ -34,14 +36,21 @@ from src.observability.logger import get_logger
 logger = get_logger()
 
 
-# ============ 审批定义表单字段 ID 常量 ============
+# ============ 审批定义表单字段 ID 常量（旧审批定义的兜底值） ============
 # 这些 ID 是飞书自动生成的，通过 query_approval_definition.py 脚本查询得到
-# 如果审批定义被重建，需重新查询并更新这些常量
-FIELD_ID_ASIN = "widget17850667532920001"
-FIELD_ID_PRODUCT_NAME = "widget17850667792080001"
-FIELD_ID_AMOUNT = "widget17850668021870001"
-FIELD_ID_BIZ_TYPE = "widget17850668453390001"
-FIELD_ID_DESCRIPTION = "widget17850668729890001"
+# 多审批流场景下，每个规则会传自己的字段 ID，这里只是兜底默认值
+DEFAULT_FIELD_ID_ASIN = "widget17850667532920001"
+DEFAULT_FIELD_ID_PRODUCT_NAME = "widget17850667792080001"
+DEFAULT_FIELD_ID_AMOUNT = "widget17850668021870001"
+DEFAULT_FIELD_ID_BIZ_TYPE = "widget17850668453390001"
+DEFAULT_FIELD_ID_DESCRIPTION = "widget17850668729890001"
+
+# 向后兼容：保留旧常量名（其他模块可能引用）
+FIELD_ID_ASIN = DEFAULT_FIELD_ID_ASIN
+FIELD_ID_PRODUCT_NAME = DEFAULT_FIELD_ID_PRODUCT_NAME
+FIELD_ID_AMOUNT = DEFAULT_FIELD_ID_AMOUNT
+FIELD_ID_BIZ_TYPE = DEFAULT_FIELD_ID_BIZ_TYPE
+FIELD_ID_DESCRIPTION = DEFAULT_FIELD_ID_DESCRIPTION
 
 
 # ============ 审批状态映射 ============
@@ -61,10 +70,14 @@ class ApprovalClient:
 
     封装审批实例的创建和查询操作。
 
+    支持多审批流：每次实例化可传入不同的 approval_code/node_id/字段ID，
+    也可以不传，使用 .env 默认配置（向后兼容）。
+
     Attributes:
         approval_code: 审批定义 Code
         approver_open_id: 默认审批人 open_id
         node_id: 审批节点 ID（用于指定审批人）
+        field_ids: 表单字段 ID 字典（可选，不传用默认常量）
     """
 
     def __init__(
@@ -72,18 +85,22 @@ class ApprovalClient:
         approval_code: str = "",
         approver_open_id: str = "",
         node_id: str = "",
+        field_ids: dict[str, str] | None = None,
     ) -> None:
         """初始化审批客户端。
 
         Args:
-            approval_code: 审批定义 Code（从 .env 读取）
-            approver_open_id: 默认审批人 open_id（从 .env 读取）
-            node_id: 审批节点 ID（从 .env 读取）
+            approval_code: 审批定义 Code（不传则从 .env 读默认值）
+            approver_open_id: 默认审批人 open_id（不传则从 .env 读默认值）
+            node_id: 审批节点 ID（不传则从 .env 读默认值）
+            field_ids: 表单字段 ID 字典，键为 asin/product_name/amount/biz_type/description
+                       不传则使用模块顶部的默认常量
         """
         self._approval_code = approval_code or settings.feishu_approval_code
         self._approver_open_id = approver_open_id or settings.feishu_approval_approver_open_id
         self._node_id = node_id or settings.feishu_approval_node_id
         self._api_base = "https://open.feishu.cn/open-apis/approval/v4"
+        self._field_ids = field_ids or {}
 
     @property
     def is_configured(self) -> bool:
@@ -98,6 +115,10 @@ class ApprovalClient:
             and self._node_id
         )
 
+    def _get_field_id(self, key: str, default: str) -> str:
+        """获取字段 ID：优先用传入的，没有则用默认常量。"""
+        return self._field_ids.get(key, default)
+
     def _build_form(
         self,
         asin: str,
@@ -109,7 +130,7 @@ class ApprovalClient:
         """构建审批表单 JSON 字符串。
 
         飞书 API 要求 form 参数是 JSON 数组字符串，每项含 id/type/value。
-        字段 ID 必须与审批定义中的字段 ID 完全一致。
+        字段 ID 优先用实例化时传入的，没有则用默认常量。
 
         Args:
             asin: 商品 ASIN
@@ -122,12 +143,12 @@ class ApprovalClient:
             JSON 字符串，例如 [{"id":"widget_xxx","type":"input","value":"B08X"}, ...]
         """
         fields = [
-            {"id": FIELD_ID_ASIN, "type": "input", "value": asin},
-            {"id": FIELD_ID_PRODUCT_NAME, "type": "input", "value": product_name},
+            {"id": self._get_field_id("asin", DEFAULT_FIELD_ID_ASIN), "type": "input", "value": asin},
+            {"id": self._get_field_id("product_name", DEFAULT_FIELD_ID_PRODUCT_NAME), "type": "input", "value": product_name},
             # amount 类型字段的 value 是字符串形式数字
-            {"id": FIELD_ID_AMOUNT, "type": "amount", "value": str(amount)},
-            {"id": FIELD_ID_BIZ_TYPE, "type": "input", "value": biz_type},
-            {"id": FIELD_ID_DESCRIPTION, "type": "textarea", "value": description},
+            {"id": self._get_field_id("amount", DEFAULT_FIELD_ID_AMOUNT), "type": "amount", "value": str(amount)},
+            {"id": self._get_field_id("biz_type", DEFAULT_FIELD_ID_BIZ_TYPE), "type": "input", "value": biz_type},
+            {"id": self._get_field_id("description", DEFAULT_FIELD_ID_DESCRIPTION), "type": "textarea", "value": description},
         ]
         # ensure_ascii=False 避免中文被转义成 \uXXXX
         return json.dumps(fields, ensure_ascii=False)

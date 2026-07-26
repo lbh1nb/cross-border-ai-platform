@@ -89,3 +89,29 @@ class Settings(BaseSettings):
 
 # 全局单例，import 即用
 settings = Settings()
+
+
+def reload_settings() -> Settings:
+    """重新加载配置：从 .env 文件重新读取配置并更新全局单例的属性。
+
+    业务用户在 GUI 配置页保存 .env 后调用本函数，
+    让 feishu_auth / health_check / approval_scan 等模块立即读到最新配置。
+
+    实现原理：不替换 settings 对象（因为其他模块已 import 旧引用），
+    而是用新配置更新现有对象的 __dict__，所有持有引用的模块都能看到新值。
+
+    Returns:
+        更新后的 settings 单例
+    """
+    # 重置 feishu_auth 的 token 缓存，避免用旧 token
+    try:
+        from src.feishu.auth import feishu_auth
+        feishu_auth._token = None
+        feishu_auth._expires_at = 0.0
+    except Exception:
+        pass
+
+    # 重新从 .env 读取配置，更新现有对象的属性（不替换对象本身）
+    new_settings = Settings()
+    settings.__dict__.update(new_settings.__dict__)
+    return settings
