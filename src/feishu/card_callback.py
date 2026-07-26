@@ -18,19 +18,13 @@
     3. 配置请求地址：https://<ngrok-url>/callback
     4. 发布应用版本并审核通过
 
-回调数据结构（飞书推送的 JSON）：
-    {
-        "challenge": "xxx",  # URL 验证时存在
-        "token": "xxx",
-        "type": "url_verification" | "event_callback",
-        "event": {
-            "event_type": "card.action.trigger",
-            "operator": {"open_id": "ou_xxx"},
-            "action": {"value": {"action": "approve", "biz_id": "xxx"}, "tag": "button"},
-            "token": "xxx",
-            "context": {"open_message_id": "om_xxx"}
-        }
-    }
+支持两种回调格式：
+- 老格式（schema 1.0）：顶层有 type 字段
+  {"type": "url_verification", "challenge": "xxx"}
+  {"type": "event_callback", "event": {"event_type": "card.action.trigger", ...}}
+
+- 新格式（schema 2.0）：顶层无 type，event_type 在 header 里
+  {"schema": "2.0", "header": {"event_type": "card.action.trigger", ...}, "event": {...}}
 """
 
 from __future__ import annotations
@@ -56,9 +50,9 @@ app = FastAPI(
 async def handle_callback(request: Request) -> JSONResponse:
     """飞书回调统一入口。
 
-    处理两类回调：
-    1. URL 验证（type=url_verification）：飞书首次配置回调 URL 时验证所有权
-    2. 卡片按钮点击（type=event_callback，event_type=card.action.trigger）
+    兼容两种回调格式：
+    - 老格式（schema 1.0）：顶层有 type 字段
+    - 新格式（schema 2.0）：顶层无 type，event_type 在 header 里
 
     Args:
         request: FastAPI 请求对象
@@ -77,32 +71,40 @@ async def handle_callback(request: Request) -> JSONResponse:
             content={"error": "Invalid JSON body"},
         )
 
+    # 兼容两种格式：老格式顶层有 type，新格式 schema=2.0 在 header.event_type
     callback_type = body.get("type", "")
-    logger.info(f"收到飞书回调: type={callback_type}")
+    header = body.get("header", {}) if not callback_type else {}
+    event_type = header.get("event_type", "")
 
-    # 1. URL 验证
+    logger.info(
+        f"收到飞书回调: type={callback_type or '(新格式)'}, "
+        f"event_type={event_type or '(URL验证)'}"
+    )
+
+    # 1. URL 验证（两种格式都有 type=url_verification）
     if callback_type == "url_verification":
         challenge = body.get("challenge", "")
         logger.info(f"URL 验证请求, challenge={challenge[:20]}...")
         return JSONResponse(content={"challenge": challenge})
 
     # 2. 卡片按钮点击事件
-    if callback_type == "event_callback":
+    # 老格式：type=event_callback，event_type 在 event 里
+    # 新格式：header.event_type=card.action.trigger
+    is_card_action = (
+        (callback_type == "event_callback" and body.get("event", {}).get("event_type") == "card.action.trigger")
+        or event_type == "card.action.trigger"
+    )
+
+    if is_card_action:
         event = body.get("event", {})
-        event_type = event.get("event_type", "")
-        if event_type == "card.action.trigger":
-            return await _handle_card_action(event)
+        return await _handle_card_action(event)
 
-        logger.warning(f"未支持的事件类型: {event_type}")
-        return JSONResponse(
-            status_code=200,
-            content={"success": False, "message": f"Unsupported event: {event_type}"},
-        )
-
-    logger.warning(f"未支持的回调类型: {callback_type}")
+    logger.warning(
+        f"未支持的回调: type={callback_type}, event_type={event_type}"
+    )
     return JSONResponse(
-        status_code=400,
-        content={"error": f"Unsupported callback type: {callback_type}"},
+        status_code=200,
+        content={"success": False, "message": f"Unsupported callback: type={callback_type}, event_type={event_type}"},
     )
 
 
@@ -173,11 +175,16 @@ async def _handle_approve(value: dict[str, Any], operator_id: str) -> dict[str, 
     """
     biz_type = value.get("biz_type", "unknown")
     biz_id = value.get("biz_id", "unknown")
-    amount = value.get("amount", 0)
+    # amount 在卡片 value 里是字符串（飞书卡片协议不允许 float）
+    amount_raw = value.get("amount", "0")
+    try:
+        amount = float(amount_raw) if amount_raw else 0.0
+    except (TypeError, ValueError):
+        amount = 0.0
 
     logger.info(
         f"审批通过: biz_type={biz_type}, biz_id={biz_id}, "
-        f"amount=${amount}, operator={operator_id}"
+        f"amount=${amount:,.2f}, operator={operator_id}"
     )
 
     # TODO 08-06: 回写飞书表格审批状态

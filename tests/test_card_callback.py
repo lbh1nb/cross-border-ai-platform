@@ -418,6 +418,32 @@ class TestCallbackServiceCardAction:
         assert response.status_code == 200
         assert response.json()["success"] is False
 
+    def test_new_schema_2_0_card_action(self) -> None:
+        """新格式（schema 2.0）的卡片按钮点击能正确处理。
+
+        飞书新版回调格式顶层无 type 字段，event_type 在 header 里。
+        """
+        client = TestClient(app)
+        response = client.post("/callback", json={
+            "schema": "2.0",
+            "header": {
+                "event_id": "xxx",
+                "event_type": "card.action.trigger",
+                "token": "xxx",
+                "app_id": "cli_xxx",
+            },
+            "event": {
+                "operator": {"open_id": "ou_test"},
+                "action": {
+                    "value": {"action": "approve", "biz_id": "TEST123", "biz_type": "选品采购"},
+                    "tag": "button",
+                },
+            },
+        })
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+
     def test_invalid_json_returns_400(self) -> None:
         """请求体不是 JSON 返回 400。"""
         client = TestClient(app)
@@ -428,13 +454,14 @@ class TestCallbackServiceCardAction:
         )
         assert response.status_code == 400
 
-    def test_unsupported_callback_type_returns_400(self) -> None:
-        """未支持的回调类型返回 400。"""
+    def test_unsupported_callback_type_returns_200(self) -> None:
+        """未支持的回调类型返回 200（避免飞书重试）。"""
         client = TestClient(app)
         response = client.post("/callback", json={
             "type": "unknown_type",
         })
-        assert response.status_code == 400
+        assert response.status_code == 200
+        assert response.json()["success"] is False
 
 
 class TestHealthEndpoint:

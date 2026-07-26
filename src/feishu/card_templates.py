@@ -594,6 +594,9 @@ def build_approval_card(
         })
 
     # 审批按钮（value 回调）
+    # 飞书卡片协议要求 value 对象里的值只能是 string/int/bool，不能是 float
+    # 否则报错 230099: parse card json err
+    amount_str = str(amount)
     actions.append({
         "tag": "button",
         "text": {"tag": "plain_text", "content": "✓ 通过"},
@@ -601,7 +604,7 @@ def build_approval_card(
             "action": "approve",
             "biz_type": biz_type,
             "biz_id": biz_id,
-            "amount": amount,
+            "amount": amount_str,
         },
         "type": "primary",
     })
@@ -612,7 +615,7 @@ def build_approval_card(
             "action": "reject",
             "biz_type": biz_type,
             "biz_id": biz_id,
-            "amount": amount,
+            "amount": amount_str,
         },
         "type": "danger",
     })

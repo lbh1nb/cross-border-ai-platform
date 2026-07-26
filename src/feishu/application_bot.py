@@ -22,6 +22,7 @@ API 文档：
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import httpx
@@ -80,10 +81,14 @@ class ApplicationBot:
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json; charset=utf-8",
             }
+            # 飞书 IM 接口要求 content 是 JSON 字符串（不是 dict 对象）
+            # msg_type=interactive 时，content 直接是卡片对象的 JSON 字符串
+            # 注意：不要再包一层 {"card": ...}，否则报错 230099
+            # 官方文档：https://open.feishu.cn/document/server-docs/im-v1/message/create
             payload = {
                 "receive_id": self._chat_id,
                 "msg_type": "interactive",
-                "content": {"card": card},
+                "content": json.dumps(card, ensure_ascii=False),
             }
             params = {"receive_id_type": "chat_id"}
 
@@ -94,7 +99,7 @@ class ApplicationBot:
                     params=params,
                     json=payload,
                 )
-                response.raise_for_status()
+                # 不用 raise_for_status，飞书 4xx 也会返回 JSON 错误信息
                 data = response.json()
 
             if data.get("code") == 0:
@@ -103,9 +108,11 @@ class ApplicationBot:
                 )
                 return True
 
+            # 打印完整响应体便于排查（含飞书错误码、msg、log_id）
             logger.error(
-                f"应用机器人发送卡片失败: code={data.get('code')}, "
-                f"msg={data.get('msg')}"
+                f"应用机器人发送卡片失败: HTTP {response.status_code}, "
+                f"code={data.get('code')}, msg={data.get('msg')}, "
+                f"log_id={data.get('error', {}).get('log_id', '')}"
             )
             return False
 

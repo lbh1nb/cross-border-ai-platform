@@ -323,6 +323,7 @@ sequenceDiagram
 - 端点：`GET /`（服务说明）
 - 支持 URL 验证（飞书首次配置回调 URL 时发送 challenge）
 - 支持 `card.action.trigger` 事件（卡片按钮点击）
+- **兼容两种回调格式**：老格式（schema 1.0，顶层 `type` 字段）和新格式（schema 2.0，`header.event_type` 字段）
 - 内置 2 个 action 处理器：`approve`（审批通过）/ `reject`（审批拒绝）
 - 08-06 会扩展审批回写多维表格的逻辑
 

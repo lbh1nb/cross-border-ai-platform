@@ -93,6 +93,17 @@ class FeishuAuth:
 feishu_auth = FeishuAuth()
 
 
+def get_tenant_access_token() -> str:
+    """模块级便捷函数：获取有效的 tenant_access_token。
+
+    等价于 feishu_auth.get_token()，供 application_bot / get_chat_id 等脚本直接导入使用。
+
+    Returns:
+        有效的 tenant_access_token 字符串
+    """
+    return feishu_auth.get_token()
+
+
 if __name__ == "__main__":
     """直接运行本文件，测试 token 获取是否成功。
 
