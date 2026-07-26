@@ -136,8 +136,8 @@ class TestFeishuBotSendRichText:
         result = bot.send_rich_text(
             title="库存预警通知",
             content=[
-                [{"tag": "text", "text": "商品A 可售5天，"}],
-                [{"tag": "b", "text": "紧急预警"}],
+                [{"tag": "text", "text": "商品A 可售5天，紧急预警"}],
+                [{"tag": "a", "text": "查看详情", "href": "https://feishu.cn"}],
             ],
         )
 

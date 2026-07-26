@@ -34,17 +34,18 @@ def test_text_message() -> bool:
 
 
 def test_rich_text_message() -> bool:
-    """测试2：发送富文本消息。"""
+    """测试2：发送富文本消息。
+
+    注意：飞书 Webhook 富文本只支持 text/a/at 三种标签，不支持 b（加粗）。
+    要加粗效果需用交互卡片的 lark_md 格式。
+    """
     print("\n[测试 2] 发送富文本消息...")
     return feishu_bot.send_rich_text(
         title="【AI 运营中台】库存预警测试通知",
         content=[
             [{"tag": "text", "text": "测试商品A "}],
             [
-                {"tag": "text", "text": "可售天数："},
-                {"tag": "b", "text": "5 天"},
-                {"tag": "text", "text": "，预警等级："},
-                {"tag": "b", "text": "紧急"},
+                {"tag": "text", "text": "可售天数：5 天，预警等级：紧急"},
             ],
             [
                 {"tag": "text", "text": "详情请查看 "},

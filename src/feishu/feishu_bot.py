@@ -147,25 +147,27 @@ class FeishuBot:
     ) -> bool:
         """发送富文本消息。
 
-        支持多段落、加粗、链接、@用户等。每个段落是一个元素列表。
+        支持多段落、链接、@用户，不支持加粗（加粗需用交互卡片）。每个段落是一个元素列表。
 
         Args:
-            title: 消息标题
-            content: 富文本内容，格式为二维数组
-                外层每个元素是一个段落，内层每个元素是一个文本片段
-                文本片段格式：{"tag": "text", "text": "普通文字"}
-                            {"tag": "a", "text": "链接文字", "href": "https://..."}
-                            {"tag": "b", "text": "加粗文字"}
+        title: 消息标题
+        content: 富文本内容，格式为二维数组
+            外层每个元素是一个段落，内层每个元素是一个文本片段
+            文本片段格式（仅支持以下 3 种标签）：
+                {"tag": "text", "text": "普通文字"}
+                {"tag": "a", "text": "链接文字", "href": "https://..."}
+                {"tag": "at", "user_id": "ou_xxx", "text": "@用户"}
+            注意：不支持 b 标签（加粗），加粗需用交互卡片的 lark_md 格式
 
-        Returns:
-            是否发送成功
+    Returns:
+        是否发送成功
 
-        示例：
+    示例：
             feishu_bot.send_rich_text(
                 title="库存预警通知",
                 content=[
-                    [{"tag": "text", "text": "商品A 可售天数：5天，"}],
-                    [{"tag": "b", "text": "紧急预警"}]
+                    [{"tag": "text", "text": "商品A 可售天数：5天，紧急预警"}],
+                    [{"tag": "a", "text": "查看详情", "href": "https://feishu.cn"}]
                 ]
             )
         """
