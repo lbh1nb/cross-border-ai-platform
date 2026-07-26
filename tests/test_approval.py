@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from src.config import settings
 from src.feishu.approval import (
     APPROVAL_STATUS_MAP,
     ApprovalClient,
@@ -41,8 +42,12 @@ class TestApprovalClientConfig:
         )
         assert client.is_configured is True
 
-    def test_is_configured_false_when_code_missing(self) -> None:
+    def test_is_configured_false_when_code_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """approval_code 为空时 is_configured 返回 False。"""
+        # 隔离 .env 真实配置，避免空字符串回退到 settings
+        monkeypatch.setattr(settings, "feishu_approval_code", "")
         client = ApprovalClient(
             approval_code="",
             approver_open_id="ou_test",
@@ -50,8 +55,11 @@ class TestApprovalClientConfig:
         )
         assert client.is_configured is False
 
-    def test_is_configured_false_when_approver_missing(self) -> None:
+    def test_is_configured_false_when_approver_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """approver_open_id 为空时 is_configured 返回 False。"""
+        monkeypatch.setattr(settings, "feishu_approval_approver_open_id", "")
         client = ApprovalClient(
             approval_code="TEST-CODE",
             approver_open_id="",
@@ -59,8 +67,11 @@ class TestApprovalClientConfig:
         )
         assert client.is_configured is False
 
-    def test_is_configured_false_when_node_missing(self) -> None:
+    def test_is_configured_false_when_node_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """node_id 为空时 is_configured 返回 False。"""
+        monkeypatch.setattr(settings, "feishu_approval_node_id", "")
         client = ApprovalClient(
             approval_code="TEST-CODE",
             approver_open_id="ou_test",

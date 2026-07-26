@@ -361,6 +361,95 @@ sequenceDiagram
 - 本地开发用 ngrok 内网穿透（`scripts/start_ngrok.py`）
 - 生产环境部署到云服务器（第4周 Docker 化）
 
+### 2.6 桌面 GUI 层（src/gui/，08-07 新增）
+
+**PySide6 桌面应用**，业务用户无需接触代码即可完成所有操作。
+
+```mermaid
+flowchart TB
+    subgraph 主窗口
+        A[MainWindow<br/>侧边栏 + QStackedWidget]
+    end
+
+    subgraph 四大页面
+        B[ConfigPage<br/>配置面板]
+        C[ApprovalPage<br/>审批流管理]
+        D[TaskPage<br/>任务控制]
+        E[DashboardPage<br/>数据看板]
+    end
+
+    subgraph 服务层
+        F[EnvService<br/>.env 读写]
+        G[ApprovalService<br/>审批流扫描/启用]
+        H[SchedulerThread<br/>后台调度器]
+        I[BitableClient<br/>飞书表格读取]
+    end
+
+    A --> B
+    A --> C
+    A --> D
+    A --> E
+    B --> F
+    C --> G
+    D --> H
+    E --> I
+
+    style A fill:#2d5a3d,color:#fff
+    style C fill:#5a3d2d,color:#fff
+    style F fill:#2d3a5a,color:#fff
+    style G fill:#2d3a5a,color:#fff
+```
+
+**GUI 模块结构**：
+- `src/gui/main.py` — GUI 入口（QApplication + 全局样式）
+- `src/gui/main_window.py` — 主窗口（侧边栏 + 4 页面切换）
+- `src/gui/pages/config_page.py` — 配置面板（飞书凭证/表 ID/审批人 → .env）
+- `src/gui/pages/approval_page.py` — 审批流管理（扫描飞书审批定义 → 一键启用）
+- `src/gui/pages/task_page.py` — 任务控制（启停调度器 + 实时日志）
+- `src/gui/pages/dashboard_page.py` — 数据看板（选品池 + 库存预警表格）
+- `src/gui/services/env_service.py` — .env 配置读写服务
+- `src/gui/services/approval_service.py` — 审批流扫描/查询/启用服务
+
+**审批流自动检测机制**：
+
+```mermaid
+sequenceDiagram
+    participant User as 业务用户
+    participant GUI as GUI 审批流管理
+    participant ScanThread as 扫描线程
+    participant Feishu as 飞书 API
+    participant Env as .env 文件
+
+    User->>GUI: 点"扫描审批定义"
+    GUI->>ScanThread: 启动后台线程
+    ScanThread->>Feishu: POST /approvals（列出所有审批定义）
+    Feishu-->>ScanThread: 返回审批定义列表
+    ScanThread->>GUI: 信号通知（列表数据）
+    GUI->>User: 显示审批定义列表
+
+    User->>GUI: 选中一个审批定义
+    GUI->>Feishu: GET /approvals/{code}（查详情）
+    Feishu-->>GUI: 返回表单字段 ID + 节点 ID
+    GUI->>User: 显示详情
+
+    User->>GUI: 点"启用此审批流"
+    GUI->>Env: 写入 APPROVAL_CODE / NODE_ID / APPROVER_OPEN_ID
+    Env-->>GUI: 写入成功
+    GUI->>User: 显示"已启用 ✓"
+```
+
+**多线程设计**：
+- 所有飞书 API 调用都在 QThread 后台执行，避免阻塞 UI
+- 调度器在独立 QThread 运行，GUI 主线程保持响应
+- 日志刷新用 QTimer 每秒读取日志文件
+
+**PyInstaller 打包**（08-07 新增）：
+- `scripts/build_exe.py` — 打包脚本
+- 输出 `dist/跨境电商AI运营中台.exe`（约 80-120MB）
+- 用 `--onefile` 打包成单文件，用户双击即用
+- 用 `--windowed` 隐藏控制台窗口
+- 用 `--collect-all PySide6` 收集 Qt 所有依赖
+
 ## 三、数据流
 
 ```mermaid

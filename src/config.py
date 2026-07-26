@@ -2,15 +2,29 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _resolve_env_file() -> str:
+    """获取 .env 文件路径。
+
+    打包模式（PyInstaller frozen）：exe 同目录
+    开发模式：项目根目录下的 .env
+    """
+    if getattr(sys, "frozen", False):
+        return str(Path(sys.executable).resolve().parent / ".env")
+    return ".env"
 
 
 class Settings(BaseSettings):
     """全局配置，从 .env 文件读取。"""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_resolve_env_file(),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
