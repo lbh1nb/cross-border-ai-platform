@@ -39,9 +39,10 @@ class FieldType:
 SELECTION_TABLE_FIELDS = [
     {"field_name": "商品名称", "type": FieldType.TEXT},
     {"field_name": "ASIN", "type": FieldType.TEXT},
-    {"field_name": "品类", "type": FieldType.SINGLE_SELECT, "property": {"options": [
-        {"name": "家居收纳"}, {"name": "厨房用品"}, {"name": "户外家具"},
-        {"name": "办公家具"}, {"name": "卧室家具"}, {"name": "其他"},
+    {"field_name": "品类", "type": FieldType.TEXT},
+    {"field_name": "来源平台", "type": FieldType.SINGLE_SELECT, "property": {"options": [
+        {"name": "亚马逊"}, {"name": "沃尔玛"}, {"name": "Wayfair"},
+        {"name": "TikTok Shop"}, {"name": "独立站"},
     ]}},
     {"field_name": "价格区间", "type": FieldType.TEXT},
     {"field_name": "评分", "type": FieldType.NUMBER, "property": {"formatter": "0.0"}},
@@ -131,10 +132,34 @@ INVENTORY_TABLE_FIELDS = [
     {"field_name": "更新时间", "type": FieldType.DATETIME, "property": {"date_formatter": "yyyy-MM-dd HH:mm"}},
 ]
 
+# ============================================================
+# 表5：采集配置表 —— 定义企业经营品类与采集平台（可自定义）
+# ============================================================
+# 设计理念：
+# - 品类字段使用文本而非单选，企业可自由填写经营范围
+#   （家具企业填"户外家具"，3C企业填"蓝牙耳机"，无需改代码）
+# - 平台字段使用单选，限定支持的跨境电商平台
+# - 启用状态控制单条配置是否参与采集
+COLLECTION_CONFIG_TABLE_FIELDS = [
+    {"field_name": "品类", "type": FieldType.TEXT},
+    {"field_name": "平台", "type": FieldType.SINGLE_SELECT, "property": {"options": [
+        {"name": "亚马逊"}, {"name": "沃尔玛"}, {"name": "Wayfair"},
+        {"name": "TikTok Shop"}, {"name": "独立站"},
+    ]}},
+    {"field_name": "采集数量", "type": FieldType.NUMBER, "property": {"formatter": "0"}},
+    {"field_name": "优先级", "type": FieldType.NUMBER, "property": {"formatter": "0"}},
+    {"field_name": "启用状态", "type": FieldType.SINGLE_SELECT, "property": {"options": [
+        {"name": "启用"}, {"name": "停用"},
+    ]}},
+    {"field_name": "备注", "type": FieldType.TEXT},
+    {"field_name": "更新时间", "type": FieldType.DATETIME, "property": {"date_formatter": "yyyy-MM-dd HH:mm"}},
+]
+
 # 所有表的配置汇总，供批量创建使用
 ALL_TABLES = {
     "选品池": SELECTION_TABLE_FIELDS,
     "Listing库": LISTING_TABLE_FIELDS,
     "销售日报": DAILY_REPORT_TABLE_FIELDS,
     "库存预警": INVENTORY_TABLE_FIELDS,
+    "采集配置": COLLECTION_CONFIG_TABLE_FIELDS,
 }

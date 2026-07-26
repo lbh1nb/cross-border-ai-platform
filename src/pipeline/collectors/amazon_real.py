@@ -25,13 +25,15 @@ class RealAmazonCollector(BaseCollector):
     def __init__(self, proxy_pool: list[str] | None = None) -> None:
         self._proxy_pool = proxy_pool or []
 
-    def collect(self, category: str, limit: int = 20) -> list[ProductInfo]:
+    def collect(
+        self, category: str, limit: int = 20, platform: str = "亚马逊"
+    ) -> list[ProductInfo]:
         """采集指定品类的真实商品数据。
 
         Raises:
             NotImplementedError: 当前版本未实现真实抓取。
         """
         raise NotImplementedError(
-            "真实采集器尚未实现。请使用 MockAmazonCollector，"
+            "真实采集器尚未实现。请使用 MockMultiPlatformCollector，"
             "或接入第三方 API（Keepa / Jungle Scout）。"
         )

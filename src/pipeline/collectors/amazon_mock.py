@@ -122,12 +122,15 @@ class MockAmazonCollector(BaseCollector):
     def __init__(self, seed: int | None = None) -> None:
         self._rng = random.Random(seed)
 
-    def collect(self, category: str, limit: int = 20) -> list[ProductInfo]:
+    def collect(
+        self, category: str, limit: int = 20, platform: str = "亚马逊"
+    ) -> list[ProductInfo]:
         """采集指定品类的模拟商品数据。
 
         Args:
             category: 品类名称，必须在 _CATEGORY_DB 中
             limit: 采集数量
+            platform: 来源平台（兼容接口，本采集器固定为亚马逊）
 
         Returns:
             商品信息列表
@@ -159,6 +162,7 @@ class MockAmazonCollector(BaseCollector):
                 review_count=review_count,
                 bsr_rank=bsr_rank,
                 url=f"https://www.amazon.com/dp/{asin}",
+                platform="亚马逊",
                 market_capacity=cat_data["market_capacity"],
                 competition_level=cat_data["competition_level"],
                 profit_margin=cat_data["profit_margin"],

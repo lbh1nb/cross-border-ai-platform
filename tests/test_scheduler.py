@@ -6,7 +6,6 @@ from datetime import datetime
 
 import pytest
 
-from src.scheduler.category_strategy import WEEKDAY_CATEGORY, get_today_category
 from src.scheduler.inventory_alert import (
     ALERT_THRESHOLD_URGENT,
     ALERT_THRESHOLD_WARNING,
@@ -14,37 +13,6 @@ from src.scheduler.inventory_alert import (
 )
 from src.scheduler.scheduler import SchedulerManager
 from src.scheduler.triggers import ALL_TRIGGERS
-
-
-class TestCategoryStrategy:
-    """品类轮换策略测试。"""
-
-    def test_monday_returns_home_storage(self) -> None:
-        """周一返回家居收纳。"""
-        monday = datetime(2026, 7, 27)  # 周一
-        assert get_today_category(monday) == "家居收纳"
-
-    def test_friday_returns_bedroom(self) -> None:
-        """周五返回卧室家具。"""
-        friday = datetime(2026, 7, 31)  # 周五
-        assert get_today_category(friday) == "卧室家具"
-
-    def test_saturday_returns_none(self) -> None:
-        """周六返回 None。"""
-        saturday = datetime(2026, 8, 1)  # 周六
-        assert get_today_category(saturday) is None
-
-    def test_sunday_returns_none(self) -> None:
-        """周日返回 None。"""
-        sunday = datetime(2026, 8, 2)  # 周日
-        assert get_today_category(sunday) is None
-
-    def test_all_weekdays_have_category(self) -> None:
-        """周一到周五都有品类。"""
-        assert len(WEEKDAY_CATEGORY) == 5
-        for day in range(5):
-            assert day in WEEKDAY_CATEGORY
-            assert WEEKDAY_CATEGORY[day] is not None
 
 
 class TestInventoryAlert:

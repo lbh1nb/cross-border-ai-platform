@@ -140,6 +140,38 @@ class BitableClient:
         data = self._request("GET", path)
         return data.get("items", [])
 
+    def list_fields(self, table_id: str) -> list[dict]:
+        """获取数据表中所有字段列表。
+
+        Args:
+            table_id: 数据表 ID
+
+        Returns:
+            字段信息列表，每项含 field_id, field_name, type 等
+        """
+        path = f"/bitable/v1/apps/{self._app_token}/tables/{table_id}/fields"
+        data = self._request("GET", path)
+        return data.get("items", [])
+
+    def add_field(self, table_id: str, field: dict) -> str:
+        """向现有数据表添加一个新字段。
+
+        Args:
+            table_id: 数据表 ID
+            field: 字段定义，参考 table_schema.py
+
+        Returns:
+            新创建的 field_id
+        """
+        path = f"/bitable/v1/apps/{self._app_token}/tables/{table_id}/fields"
+        data = self._request("POST", path, json=field)
+        field_id = data.get("field_id", "")
+        logger.info(
+            f"字段添加成功: table={table_id}, "
+            f"field_name={field.get('field_name')}, field_id={field_id}"
+        )
+        return field_id
+
     # ============================================================
     # 记录管理
     # ============================================================

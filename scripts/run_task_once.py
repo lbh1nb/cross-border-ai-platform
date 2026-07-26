@@ -25,7 +25,7 @@ def main() -> None:
         from src.scheduler.tasks import product_collection_task
         print("手动触发：选品采集任务")
         result = product_collection_task()
-        print(f"\n任务完成，采集品类: {result}")
+        print(f"\n任务完成，写入记录数: {result}")
 
     elif command == "inventory_check":
         from src.scheduler.tasks import inventory_check_task

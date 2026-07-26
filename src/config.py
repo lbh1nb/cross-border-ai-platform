@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     feishu_table_id_listing: str = Field(default="", description="Listing 库表 ID")
     feishu_table_id_daily_report: str = Field(default="", description="销售日报表 ID")
     feishu_table_id_inventory: str = Field(default="", description="库存预警表 ID")
+    feishu_table_id_collection_config: str = Field(
+        default="", description="采集配置表 ID（定义企业经营品类+采集平台）"
+    )
 
     # 飞书机器人
     feishu_webhook_url: str = Field(default="", description="Webhook 机器人地址")

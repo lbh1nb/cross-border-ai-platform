@@ -24,6 +24,7 @@ class ProductInfo:
     review_count: int                # 评论数
     bsr_rank: int                    # Best Seller Rank
     url: str                         # 商品链接
+    platform: str = "亚马逊"         # 来源平台：亚马逊/沃尔玛/Wayfair/TikTok Shop/独立站
     market_capacity: str = "中"      # 市场容量：高/中/低
     competition_level: str = "中等"  # 竞争强度：激烈/中等/蓝海
     profit_margin: str = "中"        # 利润空间：高/中/低
@@ -35,6 +36,7 @@ class ProductInfo:
             "商品名称": self.name,
             "ASIN": self.asin,
             "品类": self.category,
+            "来源平台": self.platform,
             "价格区间": f"{self.price_min}-{self.price_max}美金",
             "评分": self.rating,
             "评论数": self.review_count,
@@ -54,12 +56,15 @@ class BaseCollector(ABC):
     """
 
     @abstractmethod
-    def collect(self, category: str, limit: int = 20) -> list[ProductInfo]:
-        """采集指定品类的商品数据。
+    def collect(
+        self, category: str, limit: int = 20, platform: str = "亚马逊"
+    ) -> list[ProductInfo]:
+        """采集指定品类+平台的商品数据。
 
         Args:
-            category: 品类关键词，如 "家居收纳"
+            category: 品类关键词，如 "家居收纳" 或企业自定义品类
             limit: 采集数量上限
+            platform: 来源平台，如 "亚马逊"/"沃尔玛"/"Wayfair"
 
         Returns:
             商品信息列表

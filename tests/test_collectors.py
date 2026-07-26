@@ -7,6 +7,7 @@ import pytest
 from src.pipeline.collectors import (
     BaseCollector,
     MockAmazonCollector,
+    MockMultiPlatformCollector,
     ProductInfo,
     RealAmazonCollector,
 )
@@ -136,3 +137,94 @@ class TestRealAmazonCollector:
         collector = RealAmazonCollector()
         with pytest.raises(NotImplementedError):
             collector.collect("家居收纳")
+
+
+class TestMockMultiPlatformCollector:
+    """多平台模拟采集器测试。"""
+
+    def test_amazon_collection(self) -> None:
+        """测试亚马逊平台采集。"""
+        collector = MockMultiPlatformCollector(seed=42)
+        products = collector.collect("家居收纳", limit=5, platform="亚马逊")
+        assert len(products) == 5
+        for p in products:
+            assert p.platform == "亚马逊"
+            assert "amazon.com" in p.url
+            assert p.asin.startswith("B0")
+            assert p.bsr_rank > 0  # 亚马逊有 BSR
+
+    def test_walmart_collection(self) -> None:
+        """测试沃尔玛平台采集。"""
+        collector = MockMultiPlatformCollector(seed=42)
+        products = collector.collect("家居收纳", limit=5, platform="沃尔玛")
+        assert len(products) == 5
+        for p in products:
+            assert p.platform == "沃尔玛"
+            assert "walmart.com" in p.url
+            assert p.bsr_rank == 0  # 沃尔玛无 BSR
+            assert p.asin.startswith("沃尔-")  # 沃尔玛 ID 加前缀
+
+    def test_wayfair_collection(self) -> None:
+        """测试 Wayfair 平台采集。"""
+        collector = MockMultiPlatformCollector(seed=42)
+        products = collector.collect("户外家具", limit=5, platform="Wayfair")
+        assert len(products) == 5
+        for p in products:
+            assert p.platform == "Wayfair"
+            assert "wayfair.com" in p.url
+            assert p.bsr_rank == 0  # Wayfair 无 BSR
+
+    def test_platform_affects_price(self) -> None:
+        """测试不同平台价格不同（Wayfair > 亚马逊 > 沃尔玛）。"""
+        collector = MockMultiPlatformCollector(seed=42)
+        amazon = collector.collect("户外家具", limit=20, platform="亚马逊")
+        walmart = collector.collect("户外家具", limit=20, platform="沃尔玛")
+        wayfair = collector.collect("户外家具", limit=20, platform="Wayfair")
+
+        avg_amazon = sum(p.price_min for p in amazon) / len(amazon)
+        avg_walmart = sum(p.price_min for p in walmart) / len(walmart)
+        avg_wayfair = sum(p.price_min for p in wayfair) / len(wayfair)
+
+        # Wayfair 溢价 25%，沃尔玛折价 15%
+        assert avg_wayfair > avg_amazon
+        assert avg_walmart < avg_amazon
+
+    def test_platform_affects_review_count(self) -> None:
+        """测试不同平台评论数不同（亚马逊 > 沃尔玛 > Wayfair）。"""
+        collector = MockMultiPlatformCollector(seed=42)
+        amazon = collector.collect("家居收纳", limit=20, platform="亚马逊")
+        walmart = collector.collect("家居收纳", limit=20, platform="沃尔玛")
+        wayfair = collector.collect("家居收纳", limit=20, platform="Wayfair")
+
+        avg_amazon = sum(p.review_count for p in amazon) / len(amazon)
+        avg_walmart = sum(p.review_count for p in walmart) / len(walmart)
+        avg_wayfair = sum(p.review_count for p in wayfair) / len(wayfair)
+
+        assert avg_amazon > avg_walmart
+        assert avg_walmart > avg_wayfair
+
+    def test_custom_category_falls_back(self) -> None:
+        """测试企业自定义品类（未知品类）能正常采集。"""
+        collector = MockMultiPlatformCollector(seed=42)
+        products = collector.collect("蓝牙耳机", limit=5, platform="亚马逊")
+        assert len(products) == 5
+        for p in products:
+            assert p.category == "蓝牙耳机"
+
+    def test_same_seed_same_result(self) -> None:
+        """测试相同种子产生相同数据。"""
+        c1 = MockMultiPlatformCollector(seed=42)
+        c2 = MockMultiPlatformCollector(seed=42)
+        p1 = c1.collect("户外家具", limit=5, platform="Wayfair")
+        p2 = c2.collect("户外家具", limit=5, platform="Wayfair")
+        assert len(p1) == len(p2) == 5
+        for a, b in zip(p1, p2):
+            assert a.asin == b.asin
+            assert a.name == b.name
+
+    def test_to_bitable_record_contains_platform(self) -> None:
+        """测试飞书记录包含来源平台字段。"""
+        collector = MockMultiPlatformCollector(seed=42)
+        products = collector.collect("家居收纳", limit=1, platform="沃尔玛")
+        record = products[0].to_bitable_record()
+        assert record["来源平台"] == "沃尔玛"
