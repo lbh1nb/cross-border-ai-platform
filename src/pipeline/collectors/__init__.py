@@ -1,1 +1,12 @@
-"""数据采集器：亚马逊、ERP 等外部数据源。"""
+"""采集器模块：统一导出。"""
+
+from .base import BaseCollector, ProductInfo
+from .amazon_mock import MockAmazonCollector
+from .amazon_real import RealAmazonCollector
+
+__all__ = [
+    "BaseCollector",
+    "ProductInfo",
+    "MockAmazonCollector",
+    "RealAmazonCollector",
+]

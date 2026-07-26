@@ -1,1 +1,5 @@
-"""数据清洗器：字段标准化、去重、格式转换。"""
+"""清洗器模块：统一导出。"""
+
+from .data_cleaner import CleanerConfig, DataCleaner
+
+__all__ = ["CleanerConfig", "DataCleaner"]
