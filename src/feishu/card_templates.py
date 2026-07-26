@@ -633,3 +633,99 @@ def build_approval_card(
         },
         "elements": elements,
     }
+
+
+def build_approval_done_card(
+    approved: bool,
+    biz_type: str,
+    biz_id: str,
+    amount: float,
+    approver: str = "",
+    table_url: str = "",
+) -> dict[str, Any]:
+    """构建已审批卡片（用于回调返回时更新原卡片）。
+
+    用户点击"通过"或"拒绝"后，回调服务返回此卡片替换原卡片，
+    让按钮变灰不可点，防止重复审批。
+
+    Args:
+        approved: True=已通过, False=已拒绝
+        biz_type: 业务类型
+        biz_id: 业务 ID（ASIN/SKU）
+        amount: 审批金额
+        approver: 审批人 open_id
+        table_url: 关联表格链接
+
+    Returns:
+        飞书卡片 JSON 对象（无按钮，仅显示审批结果）
+    """
+    status_text = "✅ 已通过" if approved else "❌ 已拒绝"
+    header_template = "green" if approved else "red"
+
+    elements: list[dict[str, Any]] = [
+        {
+            "tag": "div",
+            "fields": [
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**业务类型**\n{biz_type}",
+                    },
+                },
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**业务 ID**\n{biz_id}",
+                    },
+                },
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**审批金额**\n${amount:,.2f}",
+                    },
+                },
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**审批状态**\n{status_text}",
+                    },
+                },
+            ],
+        },
+        {"tag": "hr"},
+        {
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": f"**审批人**\n{approver or '未知'}\n\n此审批已处理，多维表格审批状态已更新。",
+            },
+        },
+    ]
+
+    # 仅保留"查看详情"链接按钮，不再有审批按钮
+    if table_url:
+        elements.append({
+            "tag": "action",
+            "actions": [{
+                "tag": "button",
+                "text": {"tag": "plain_text", "content": "查看详情"},
+                "url": table_url,
+                "type": "default",
+            }],
+        })
+
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {
+                "tag": "plain_text",
+                "content": f"【{status_text}】{biz_type}审批",
+            },
+            "template": header_template,
+        },
+        "elements": elements,
+    }

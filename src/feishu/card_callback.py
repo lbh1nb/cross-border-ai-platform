@@ -35,6 +35,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from src.config import settings
+from src.feishu.bitable import bitable_client
+from src.feishu.card_templates import build_approval_done_card
 from src.observability.logger import get_logger
 
 logger = get_logger()
@@ -159,23 +161,20 @@ async def _handle_card_action(event: dict[str, Any]) -> JSONResponse:
 async def _handle_approve(value: dict[str, Any], operator_id: str) -> dict[str, Any]:
     """处理审批通过按钮。
 
-    业务逻辑（08-06 完善）：
-    1. 回写多维表格"审批状态"字段为"已通过"
-    2. 记录审批人到"审批人"字段
-    3. 触发后续流程（如下单采购）
-
-    当前实现：仅记录日志，返回成功。
+    业务逻辑：
+    1. 按 ASIN 查询"库存预警"表，找到对应记录
+    2. 更新"审批状态"字段为"已通过"
+    3. 返回 toast 提示 + 更新后的卡片（按钮变灰不可点）
 
     Args:
         value: 按钮携带的数据（biz_type/biz_id/amount）
         operator_id: 操作人 open_id
 
     Returns:
-        处理结果
+        飞书期望的响应格式：{"toast": {...}, "card": {...}}
     """
     biz_type = value.get("biz_type", "unknown")
     biz_id = value.get("biz_id", "unknown")
-    # amount 在卡片 value 里是字符串（飞书卡片协议不允许 float）
     amount_raw = value.get("amount", "0")
     try:
         amount = float(amount_raw) if amount_raw else 0.0
@@ -187,46 +186,141 @@ async def _handle_approve(value: dict[str, Any], operator_id: str) -> dict[str, 
         f"amount=${amount:,.2f}, operator={operator_id}"
     )
 
-    # TODO 08-06: 回写飞书表格审批状态
-    # from src.feishu.bitable import bitable_client
-    # bitable_client.update_record(table_id, record_id, {
-    #     "审批状态": "已通过",
-    #     "审批人": operator_id,
-    # })
+    # 回写多维表格"审批状态"字段
+    update_ok = _update_approval_status(biz_id, "已通过")
+
+    toast_type = "success" if update_ok else "error"
+    toast_content = (
+        f"✅ 审批已通过: {biz_type} {biz_id}\n多维表格审批状态已更新"
+        if update_ok
+        else f"⚠️ 审批通过，但多维表格更新失败: {biz_type} {biz_id}"
+    )
 
     return {
-        "success": True,
-        "message": f"审批已通过: {biz_type} {biz_id}",
+        "toast": {
+            "type": toast_type,
+            "content": toast_content,
+        },
+        "card": {
+            "type": "raw",
+            "data": build_approval_done_card(
+                approved=True,
+                biz_type=biz_type,
+                biz_id=biz_id,
+                amount=amount,
+                approver=operator_id,
+            ),
+        },
     }
 
 
 async def _handle_reject(value: dict[str, Any], operator_id: str) -> dict[str, Any]:
     """处理审批拒绝按钮。
 
-    业务逻辑（08-06 完善）：
-    1. 回写多维表格"审批状态"字段为"已拒绝"
-    2. 记录审批人到"审批人"字段
-
-    当前实现：仅记录日志，返回成功。
+    业务逻辑：
+    1. 按 ASIN 查询"库存预警"表，找到对应记录
+    2. 更新"审批状态"字段为"已驳回"
+    3. 返回 toast 提示 + 更新后的卡片（按钮变灰不可点）
 
     Args:
         value: 按钮携带的数据
         operator_id: 操作人 open_id
 
     Returns:
-        处理结果
+        飞书期望的响应格式：{"toast": {...}, "card": {...}}
     """
     biz_type = value.get("biz_type", "unknown")
     biz_id = value.get("biz_id", "unknown")
+    amount_raw = value.get("amount", "0")
+    try:
+        amount = float(amount_raw) if amount_raw else 0.0
+    except (TypeError, ValueError):
+        amount = 0.0
 
     logger.info(
         f"审批拒绝: biz_type={biz_type}, biz_id={biz_id}, operator={operator_id}"
     )
 
+    # 回写多维表格"审批状态"字段
+    update_ok = _update_approval_status(biz_id, "已驳回")
+
+    toast_type = "success" if update_ok else "error"
+    toast_content = (
+        f"❌ 审批已拒绝: {biz_type} {biz_id}\n多维表格审批状态已更新"
+        if update_ok
+        else f"⚠️ 审批拒绝，但多维表格更新失败: {biz_type} {biz_id}"
+    )
+
     return {
-        "success": True,
-        "message": f"审批已拒绝: {biz_type} {biz_id}",
+        "toast": {
+            "type": toast_type,
+            "content": toast_content,
+        },
+        "card": {
+            "type": "raw",
+            "data": build_approval_done_card(
+                approved=False,
+                biz_type=biz_type,
+                biz_id=biz_id,
+                amount=amount,
+                approver=operator_id,
+            ),
+        },
     }
+
+
+def _update_approval_status(asin: str, status: str) -> bool:
+    """按 ASIN 查询库存预警表并更新"审批状态"字段。
+
+    Args:
+        asin: 商品 ASIN（审批卡片 value 里的 biz_id）
+        status: 目标状态（"已通过" / "已驳回"）
+
+    Returns:
+        True=更新成功, False=更新失败或未找到记录
+    """
+    table_id = settings.feishu_table_id_inventory
+    if not table_id:
+        logger.error("未配置 FEISHU_TABLE_ID_INVENTORY，无法回写审批状态")
+        return False
+
+    try:
+        # 按 ASIN 查询记录（飞书 filter 条件）
+        filter_condition = {
+            "conjunction": "and",
+            "conditions": [
+                {
+                    "field_name": "ASIN",
+                    "operator": "is",
+                    "value": [asin],
+                }
+            ],
+        }
+        records = bitable_client.query_records(table_id, filter_condition)
+
+        if not records:
+            logger.warning(f"未找到 ASIN={asin} 的库存预警记录，无法更新审批状态")
+            return False
+
+        # 取第一条匹配记录（ASIN 应该是唯一的）
+        record_id = records[0].get("record_id", "")
+        if not record_id:
+            logger.error(f"ASIN={asin} 的记录缺少 record_id")
+            return False
+
+        # 更新"审批状态"字段
+        bitable_client.update_record(table_id, record_id, {"审批状态": status})
+        logger.info(
+            f"已更新库存预警表: ASIN={asin}, record_id={record_id}, 审批状态={status}"
+        )
+        return True
+
+    except Exception as e:
+        logger.error(
+            f"更新库存预警表审批状态失败: ASIN={asin}, status={status}, error={e}",
+            exc_info=True,
+        )
+        return False
 
 
 @app.get("/health")

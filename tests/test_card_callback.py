@@ -336,8 +336,23 @@ class TestCallbackServiceURLVerification:
 class TestCallbackServiceCardAction:
     """卡片按钮点击回调测试。"""
 
-    def test_approve_action_returns_success(self) -> None:
-        """点击"通过"按钮返回成功。"""
+    def test_approve_action_returns_toast_and_card(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """点击"通过"按钮返回 toast 提示 + 更新后的卡片。
+
+        新版飞书回调响应格式：{"toast": {...}, "card": {...}}
+        """
+        # mock bitable_client，避免真实调用飞书 API
+        monkeypatch.setattr(
+            "src.feishu.card_callback.bitable_client.query_records",
+            lambda *args, **kwargs: [{"record_id": "rec_test_001"}],
+        )
+        monkeypatch.setattr(
+            "src.feishu.card_callback.bitable_client.update_record",
+            lambda *args, **kwargs: "rec_test_001",
+        )
+
         client = TestClient(app)
         response = client.post("/callback", json={
             "token": "xxx",
@@ -350,7 +365,7 @@ class TestCallbackServiceCardAction:
                         "action": "approve",
                         "biz_type": "选品采购",
                         "biz_id": "B08X4ABC",
-                        "amount": 8500.0,
+                        "amount": "8500.0",
                     },
                     "tag": "button",
                 },
@@ -359,11 +374,29 @@ class TestCallbackServiceCardAction:
         })
         assert response.status_code == 200
         data = response.json()
-        assert data["success"] is True
-        assert "B08X4ABC" in data["message"]
+        # 新格式：toast 提示
+        assert "toast" in data
+        assert data["toast"]["type"] == "success"
+        assert "B08X4ABC" in data["toast"]["content"]
+        # 新格式：更新后的卡片
+        assert "card" in data
+        assert data["card"]["type"] == "raw"
+        card_data = data["card"]["data"]
+        assert "已通过" in card_data["header"]["title"]["content"]
 
-    def test_reject_action_returns_success(self) -> None:
-        """点击"拒绝"按钮返回成功。"""
+    def test_reject_action_returns_toast_and_card(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """点击"拒绝"按钮返回 toast 提示 + 更新后的卡片。"""
+        monkeypatch.setattr(
+            "src.feishu.card_callback.bitable_client.query_records",
+            lambda *args, **kwargs: [{"record_id": "rec_test_002"}],
+        )
+        monkeypatch.setattr(
+            "src.feishu.card_callback.bitable_client.update_record",
+            lambda *args, **kwargs: "rec_test_002",
+        )
+
         client = TestClient(app)
         response = client.post("/callback", json={
             "token": "xxx",
@@ -376,7 +409,7 @@ class TestCallbackServiceCardAction:
                         "action": "reject",
                         "biz_type": "库存补货",
                         "biz_id": "SKU-001",
-                        "amount": 6000.0,
+                        "amount": "6000.0",
                     },
                     "tag": "button",
                 },
@@ -384,8 +417,12 @@ class TestCallbackServiceCardAction:
         })
         assert response.status_code == 200
         data = response.json()
-        assert data["success"] is True
-        assert "SKU-001" in data["message"]
+        assert "toast" in data
+        assert data["toast"]["type"] == "success"
+        assert "SKU-001" in data["toast"]["content"]
+        assert "card" in data
+        card_data = data["card"]["data"]
+        assert "已拒绝" in card_data["header"]["title"]["content"]
 
     def test_unknown_action_returns_failure(self) -> None:
         """未知 action 返回失败但不报 500。"""
@@ -418,11 +455,23 @@ class TestCallbackServiceCardAction:
         assert response.status_code == 200
         assert response.json()["success"] is False
 
-    def test_new_schema_2_0_card_action(self) -> None:
+    def test_new_schema_2_0_card_action(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """新格式（schema 2.0）的卡片按钮点击能正确处理。
 
         飞书新版回调格式顶层无 type 字段，event_type 在 header 里。
         """
+        # mock bitable_client，避免真实调用飞书 API
+        monkeypatch.setattr(
+            "src.feishu.card_callback.bitable_client.query_records",
+            lambda *args, **kwargs: [{"record_id": "rec_test_003"}],
+        )
+        monkeypatch.setattr(
+            "src.feishu.card_callback.bitable_client.update_record",
+            lambda *args, **kwargs: "rec_test_003",
+        )
+
         client = TestClient(app)
         response = client.post("/callback", json={
             "schema": "2.0",
@@ -435,14 +484,15 @@ class TestCallbackServiceCardAction:
             "event": {
                 "operator": {"open_id": "ou_test"},
                 "action": {
-                    "value": {"action": "approve", "biz_id": "TEST123", "biz_type": "选品采购"},
+                    "value": {"action": "approve", "biz_id": "TEST123", "biz_type": "选品采购", "amount": "5000.0"},
                     "tag": "button",
                 },
             },
         })
         assert response.status_code == 200
         data = response.json()
-        assert data["success"] is True
+        assert "toast" in data
+        assert data["toast"]["type"] == "success"
 
     def test_invalid_json_returns_400(self) -> None:
         """请求体不是 JSON 返回 400。"""
@@ -453,6 +503,40 @@ class TestCallbackServiceCardAction:
             headers={"Content-Type": "application/json"},
         )
         assert response.status_code == 400
+
+    def test_approve_failure_returns_error_toast(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """回写多维表格失败时返回 error toast（但仍返回 200，避免飞书重试）。"""
+        # mock query_records 抛异常，模拟回写失败
+        def _raise(*args, **kwargs):
+            raise RuntimeError("飞书 API 不可用")
+        monkeypatch.setattr(
+            "src.feishu.card_callback.bitable_client.query_records",
+            _raise,
+        )
+
+        client = TestClient(app)
+        response = client.post("/callback", json={
+            "type": "event_callback",
+            "event": {
+                "event_type": "card.action.trigger",
+                "operator": {"open_id": "ou_test"},
+                "action": {
+                    "value": {
+                        "action": "approve",
+                        "biz_type": "选品采购",
+                        "biz_id": "B08FAIL",
+                        "amount": "5000.0",
+                    },
+                    "tag": "button",
+                },
+            },
+        })
+        assert response.status_code == 200
+        data = response.json()
+        assert data["toast"]["type"] == "error"
+        assert "更新失败" in data["toast"]["content"]
 
     def test_unsupported_callback_type_returns_200(self) -> None:
         """未支持的回调类型返回 200（避免飞书重试）。"""
