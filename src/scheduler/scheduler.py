@@ -22,6 +22,7 @@ from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from src.observability.logger import get_logger
 from src.scheduler.tasks import (
     daily_report_task,
+    data_cleanup_task,
     inventory_check_task,
     product_collection_task,
 )
@@ -37,6 +38,7 @@ TASK_MAP = {
     "product_collection": product_collection_task,
     "inventory_check": inventory_check_task,
     "daily_report": daily_report_task,
+    "data_cleanup": data_cleanup_task,
 }
 
 
@@ -70,10 +72,30 @@ class SchedulerManager:
             aps_config["replace_existing"] = True
 
             self._scheduler.add_job(task_func, **aps_config)
+            # 构建可读的触发器描述
+            trigger_desc = self._describe_trigger(trigger_config)
             logger.info(
-                f"注册任务: {trigger_config['name']} ({task_id}) "
-                f"-> {trigger_config.get('hour', '*')}:{trigger_config.get('minute', '*')}"
+                f"注册任务: {trigger_config['name']} ({task_id}) -> {trigger_desc}"
             )
+
+    @staticmethod
+    def _describe_trigger(config: dict) -> str:
+        """生成可读的触发器描述。"""
+        day = config.get("day", "*")
+        hour = config.get("hour", "*")
+        minute = config.get("minute", "*")
+        day_of_week = config.get("day_of_week", "*")
+
+        if day != "*" and day_of_week == "*":
+            # 按天数触发（如数据清理）
+            return f"每{day.replace('*/', '')}天 {hour}:{minute:02d}"
+        if day_of_week == "mon-fri":
+            return f"工作日 {hour}:{minute:02d}"
+        if minute == "*/30":
+            return "每30分钟"
+        if day_of_week == "*" and day == "*":
+            return f"每天 {hour}:{minute:02d}"
+        return f"day={day} dow={day_of_week} {hour}:{minute}"
 
     def start(self) -> None:
         """启动调度器。"""

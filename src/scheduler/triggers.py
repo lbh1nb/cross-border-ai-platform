@@ -37,9 +37,21 @@ DAILY_REPORT_TRIGGER = {
     "name": "日报生成",
 }
 
+# 数据清理：每三天凌晨 2 点执行
+# 防止飞书表格数据过多导致业务用户查看困难
+DATA_CLEANUP_TRIGGER = {
+    "trigger": "cron",
+    "day": "*/3",  # 每 3 天
+    "hour": 2,
+    "minute": 0,
+    "id": "data_cleanup",
+    "name": "数据清理",
+}
+
 # 所有触发器汇总
 ALL_TRIGGERS = [
     COLLECTION_TRIGGER,
     INVENTORY_CHECK_TRIGGER,
     DAILY_REPORT_TRIGGER,
+    DATA_CLEANUP_TRIGGER,
 ]

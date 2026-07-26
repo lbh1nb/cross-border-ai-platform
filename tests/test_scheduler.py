@@ -54,11 +54,18 @@ class TestSchedulerManager:
     """调度器管理器测试。"""
 
     def test_register_all_tasks(self) -> None:
-        """注册所有任务后任务列表长度正确。"""
+        """注册所有任务后任务列表长度正确。
+
+        共 4 个任务：
+        - product_collection（选品采集）
+        - inventory_check（库存预警）
+        - daily_report（日报生成）
+        - data_cleanup（数据清理，每3天）
+        """
         manager = SchedulerManager(blocking=False)
         manager.register_all_tasks()
         jobs = manager.get_jobs()
-        assert len(jobs) == 3
+        assert len(jobs) == 4
         manager.shutdown()
 
     def test_start_and_shutdown_background(self) -> None:

@@ -153,6 +153,70 @@ class BitableClient:
         data = self._request("GET", path)
         return data.get("items", [])
 
+    def list_views(self, table_id: str) -> list[dict]:
+        """获取数据表中所有视图列表。
+
+        Args:
+            table_id: 数据表 ID
+
+        Returns:
+            视图信息列表，每项含 view_id, view_name, view_type 等
+        """
+        path = f"/bitable/v1/apps/{self._app_token}/tables/{table_id}/views"
+        data = self._request("GET", path)
+        return data.get("items", [])
+
+    def create_view(self, table_id: str, view_name: str, view_type: str = "grid") -> str:
+        """在数据表中创建一个新视图。
+
+        飞书视图类型：
+        - grid: 网格视图（默认）
+        - kanban: 看板视图
+        - gallery: 画册视图
+        - gantt: 甘特图视图
+        - form: 表单视图
+
+        Args:
+            table_id: 数据表 ID
+            view_name: 视图名称
+            view_type: 视图类型，默认 grid
+
+        Returns:
+            新创建的 view_id
+        """
+        path = f"/bitable/v1/apps/{self._app_token}/tables/{table_id}/views"
+        payload = {"view_name": view_name, "view_type": view_type}
+
+        data = self._request("POST", path, json=payload)
+        # 飞书 API 返回结构: {"view": {"view_id": "vewxxx", ...}}
+        view_id = data.get("view", {}).get("view_id", "")
+        logger.info(
+            f"视图创建成功: table={table_id}, "
+            f"view_name={view_name}, view_id={view_id}"
+        )
+        return view_id
+
+    def patch_view(
+        self, table_id: str, view_id: str, settings: dict
+    ) -> bool:
+        """更新视图配置（如隐藏字段、设置筛选条件）。
+
+        飞书 API 限制：通过 patch 可以更新视图的属性，包括字段配置、筛选条件、排序等。
+        具体配置格式参考飞书 Bitable View API 文档。
+
+        Args:
+            table_id: 数据表 ID
+            view_id: 视图 ID
+            settings: 视图配置字典
+
+        Returns:
+            是否更新成功
+        """
+        path = f"/bitable/v1/apps/{self._app_token}/tables/{table_id}/views/{view_id}"
+        self._request("PATCH", path, json=settings)
+        logger.info(f"视图更新成功: table={table_id}, view_id={view_id}")
+        return True
+
     def add_field(self, table_id: str, field: dict) -> str:
         """向现有数据表添加一个新字段。
 
@@ -289,6 +353,34 @@ class BitableClient:
         self._request("DELETE", path)
         logger.info(f"记录删除成功: table={table_id}, record_id={record_id}")
         return True
+
+    def batch_delete_records(self, table_id: str, record_ids: list[str]) -> int:
+        """批量删除记录。
+
+        飞书 API 单次最多删除 500 条，超过会自动分批。
+
+        Args:
+            table_id: 数据表 ID
+            record_ids: 要删除的记录 ID 列表
+
+        Returns:
+            成功删除的记录数
+        """
+        if not record_ids:
+            return 0
+
+        path = f"/bitable/v1/apps/{self._app_token}/tables/{table_id}/records/batch_delete"
+        total_deleted = 0
+        batch_size = 500  # 飞书 API 限制
+
+        for i in range(0, len(record_ids), batch_size):
+            batch = record_ids[i:i + batch_size]
+            payload = {"records": batch}
+            self._request("POST", path, json=payload)
+            total_deleted += len(batch)
+
+        logger.info(f"批量删除记录成功: table={table_id}, count={total_deleted}")
+        return total_deleted
 
 
 # 全局单例
