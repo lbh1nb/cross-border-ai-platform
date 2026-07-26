@@ -339,18 +339,16 @@ class TestCallbackServiceCardAction:
     def test_approve_action_returns_toast_and_card(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """点击"通过"按钮返回 toast 提示 + 更新后的卡片。
+        """点击"通过"按钮立刻返回 toast + 更新后的卡片（不等回写完成）。
 
-        新版飞书回调响应格式：{"toast": {...}, "card": {...}}
+        异步回写策略：先返回乐观响应，后台再回写多维表格。
         """
-        # mock bitable_client，避免真实调用飞书 API
+        # mock 异步回写为 noop，只验证响应格式
+        async def _noop(*args, **kwargs):
+            return None
         monkeypatch.setattr(
-            "src.feishu.card_callback.bitable_client.query_records",
-            lambda *args, **kwargs: [{"record_id": "rec_test_001"}],
-        )
-        monkeypatch.setattr(
-            "src.feishu.card_callback.bitable_client.update_record",
-            lambda *args, **kwargs: "rec_test_001",
+            "src.feishu.card_callback._async_writeback_with_notify",
+            _noop,
         )
 
         client = TestClient(app)
@@ -374,11 +372,11 @@ class TestCallbackServiceCardAction:
         })
         assert response.status_code == 200
         data = response.json()
-        # 新格式：toast 提示
+        # 乐观响应：立刻返回 success toast
         assert "toast" in data
         assert data["toast"]["type"] == "success"
         assert "B08X4ABC" in data["toast"]["content"]
-        # 新格式：更新后的卡片
+        # 立刻返回更新后的卡片
         assert "card" in data
         assert data["card"]["type"] == "raw"
         card_data = data["card"]["data"]
@@ -387,14 +385,12 @@ class TestCallbackServiceCardAction:
     def test_reject_action_returns_toast_and_card(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """点击"拒绝"按钮返回 toast 提示 + 更新后的卡片。"""
+        """点击"拒绝"按钮立刻返回 toast + 更新后的卡片。"""
+        async def _noop(*args, **kwargs):
+            return None
         monkeypatch.setattr(
-            "src.feishu.card_callback.bitable_client.query_records",
-            lambda *args, **kwargs: [{"record_id": "rec_test_002"}],
-        )
-        monkeypatch.setattr(
-            "src.feishu.card_callback.bitable_client.update_record",
-            lambda *args, **kwargs: "rec_test_002",
+            "src.feishu.card_callback._async_writeback_with_notify",
+            _noop,
         )
 
         client = TestClient(app)
@@ -423,6 +419,64 @@ class TestCallbackServiceCardAction:
         assert "card" in data
         card_data = data["card"]["data"]
         assert "已拒绝" in card_data["header"]["title"]["content"]
+
+    @pytest.mark.asyncio
+    async def test_async_writeback_success(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """异步回写成功时不发告警消息。"""
+        # mock bitable_client 返回成功
+        monkeypatch.setattr(
+            "src.feishu.card_callback.bitable_client.query_records",
+            lambda *args, **kwargs: [{"record_id": "rec_ok"}],
+        )
+        monkeypatch.setattr(
+            "src.feishu.card_callback.bitable_client.update_record",
+            lambda *args, **kwargs: "rec_ok",
+        )
+        # mock application_bot.send_text 为 spy，验证不被调用
+        send_text_called = []
+        monkeypatch.setattr(
+            "src.feishu.application_bot.application_bot.send_text",
+            lambda msg: send_text_called.append(msg),
+        )
+
+        from src.feishu.card_callback import _async_writeback_with_notify
+        await _async_writeback_with_notify(
+            {"biz_id": "B08OK", "biz_type": "选品采购"},
+            operator_id="ou_test",
+            approved=True,
+        )
+        assert send_text_called == []  # 成功时不发告警
+
+    @pytest.mark.asyncio
+    async def test_async_writeback_failure_sends_alert(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """异步回写失败时通过应用机器人发告警消息。"""
+        # mock bitable_client 抛异常，模拟回写失败
+        def _raise(*args, **kwargs):
+            raise RuntimeError("飞书 API 不可用")
+        monkeypatch.setattr(
+            "src.feishu.card_callback.bitable_client.query_records",
+            _raise,
+        )
+        # mock application_bot.send_text 为 spy
+        sent_messages: list[str] = []
+        monkeypatch.setattr(
+            "src.feishu.application_bot.application_bot.send_text",
+            lambda msg: sent_messages.append(msg),
+        )
+
+        from src.feishu.card_callback import _async_writeback_with_notify
+        await _async_writeback_with_notify(
+            {"biz_id": "B08FAIL", "biz_type": "选品采购"},
+            operator_id="ou_test",
+            approved=True,
+        )
+        assert len(sent_messages) == 1
+        assert "B08FAIL" in sent_messages[0]
+        assert "回写失败" in sent_messages[0]
 
     def test_unknown_action_returns_failure(self) -> None:
         """未知 action 返回失败但不报 500。"""
@@ -458,18 +512,12 @@ class TestCallbackServiceCardAction:
     def test_new_schema_2_0_card_action(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """新格式（schema 2.0）的卡片按钮点击能正确处理。
-
-        飞书新版回调格式顶层无 type 字段，event_type 在 header 里。
-        """
-        # mock bitable_client，避免真实调用飞书 API
+        """新格式（schema 2.0）的卡片按钮点击能正确处理。"""
+        async def _noop(*args, **kwargs):
+            return None
         monkeypatch.setattr(
-            "src.feishu.card_callback.bitable_client.query_records",
-            lambda *args, **kwargs: [{"record_id": "rec_test_003"}],
-        )
-        monkeypatch.setattr(
-            "src.feishu.card_callback.bitable_client.update_record",
-            lambda *args, **kwargs: "rec_test_003",
+            "src.feishu.card_callback._async_writeback_with_notify",
+            _noop,
         )
 
         client = TestClient(app)
@@ -503,40 +551,6 @@ class TestCallbackServiceCardAction:
             headers={"Content-Type": "application/json"},
         )
         assert response.status_code == 400
-
-    def test_approve_failure_returns_error_toast(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """回写多维表格失败时返回 error toast（但仍返回 200，避免飞书重试）。"""
-        # mock query_records 抛异常，模拟回写失败
-        def _raise(*args, **kwargs):
-            raise RuntimeError("飞书 API 不可用")
-        monkeypatch.setattr(
-            "src.feishu.card_callback.bitable_client.query_records",
-            _raise,
-        )
-
-        client = TestClient(app)
-        response = client.post("/callback", json={
-            "type": "event_callback",
-            "event": {
-                "event_type": "card.action.trigger",
-                "operator": {"open_id": "ou_test"},
-                "action": {
-                    "value": {
-                        "action": "approve",
-                        "biz_type": "选品采购",
-                        "biz_id": "B08FAIL",
-                        "amount": "5000.0",
-                    },
-                    "tag": "button",
-                },
-            },
-        })
-        assert response.status_code == 200
-        data = response.json()
-        assert data["toast"]["type"] == "error"
-        assert "更新失败" in data["toast"]["content"]
 
     def test_unsupported_callback_type_returns_200(self) -> None:
         """未支持的回调类型返回 200（避免飞书重试）。"""

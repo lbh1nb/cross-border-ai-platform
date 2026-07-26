@@ -20,6 +20,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 
 from src.observability.logger import get_logger
+from src.scheduler.approval_task import auto_approval_trigger_task
 from src.scheduler.tasks import (
     daily_report_task,
     data_cleanup_task,
@@ -39,6 +40,7 @@ TASK_MAP = {
     "inventory_check": inventory_check_task,
     "daily_report": daily_report_task,
     "data_cleanup": data_cleanup_task,
+    "approval_trigger": auto_approval_trigger_task,
 }
 
 

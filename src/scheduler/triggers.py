@@ -48,10 +48,21 @@ DATA_CLEANUP_TRIGGER = {
     "name": "数据清理",
 }
 
+# 审批流自动触发：每天 10:00 扫描选品池
+# 金额超过阈值的记录自动创建飞书审批实例
+APPROVAL_TRIGGER_TRIGGER = {
+    "trigger": "cron",
+    "hour": 10,
+    "minute": 0,
+    "id": "approval_trigger",
+    "name": "审批流自动触发",
+}
+
 # 所有触发器汇总
 ALL_TRIGGERS = [
     COLLECTION_TRIGGER,
     INVENTORY_CHECK_TRIGGER,
     DAILY_REPORT_TRIGGER,
     DATA_CLEANUP_TRIGGER,
+    APPROVAL_TRIGGER_TRIGGER,
 ]

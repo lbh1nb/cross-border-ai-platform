@@ -323,9 +323,38 @@ sequenceDiagram
 - 端点：`GET /`（服务说明）
 - 支持 URL 验证（飞书首次配置回调 URL 时发送 challenge）
 - 支持 `card.action.trigger` 事件（卡片按钮点击）
+- 支持 `approval_instance` 事件（飞书审批流状态变更，08-06 新增）
 - **兼容两种回调格式**：老格式（schema 1.0，顶层 `type` 字段）和新格式（schema 2.0，`header.event_type` 字段）
 - 内置 2 个 action 处理器：`approve`（审批通过）/ `reject`（审批拒绝）
-- 08-06 会扩展审批回写多维表格的逻辑
+- 内置审批状态变更处理器（08-06 新增）：异步回写多维表格"审批状态"字段，失败时通过应用机器人发告警消息到飞书群
+
+**飞书审批流自动化**（approval.py + approval_task.py，08-06 新增）：
+
+```mermaid
+sequenceDiagram
+    participant Sched as 调度器<br/>(每天10:00)
+    participant Trigger as 审批触发任务
+    participant Approval as 飞书审批API
+    participant Mgr as 主管
+    participant Callback as 回调服务
+    participant Bitable as 多维表格
+
+    Sched->>Trigger: 触发 auto_approval_trigger_task
+    Trigger->>Bitable: 查询选品池金额>5000的记录
+    Bitable-->>Trigger: 返回待审批记录
+    Trigger->>Approval: create_approval_instance
+    Approval-->>Trigger: 返回 instance_code
+    Trigger->>Bitable: 更新审批状态为"审批中"
+    Mgr->>Approval: 在飞书审批中心通过/拒绝
+    Approval->>Callback: 推送 approval_instance 事件
+    Callback->>Approval: 查询审批实例详情(提取ASIN)
+    Callback->>Bitable: 异步回写"审批状态"字段
+```
+
+**审批流模块**：
+- `src/feishu/approval.py` — 飞书审批流 API 客户端（创建/查询审批实例）
+- `src/scheduler/approval_task.py` — 自动触发任务（扫描选品池，金额>阈值自动创建审批）
+- `scripts/query_approval_definition.py` — 查询审批定义表单结构工具
 
 **部署要求**：
 - 飞书服务器需要公网可访问的 HTTPS 地址
@@ -389,17 +418,22 @@ flowchart LR
 |----------|----------|
 | test_collectors.py | ProductInfo / MockAmazonCollector / MockMultiPlatformCollector |
 | test_cleaners.py | DataCleaner 过滤逻辑 |
-| test_scheduler.py | InventoryAlert / SchedulerManager（4个任务注册） |
+| test_scheduler.py | InventoryAlert / SchedulerManager（5个任务注册） |
 | test_feishu_auth.py | 飞书认证 |
 | test_feishu_bitable.py | BitableClient |
 | test_sync_service.py | SyncResult / 字段映射 / SyncService增量同步 / 数据清理任务 |
 | test_feishu_bot.py | Webhook 机器人消息发送 / 库存预警卡片模板 |
 | test_card_callback.py | 选品报告卡片 / 销售日报卡片 / 审批卡片 / FastAPI 回调服务 |
+| test_approval.py | ApprovalClient / 表单构建 / 审批状态变更回调 / ASIN 提取 / 自动触发任务 |
 
-**当前测试结果**：129 个测试全部通过，覆盖率 62%。
+**当前测试结果**：161 个测试全部通过，覆盖率 63%。
 
-**test_card_callback.py 覆盖场景**（26 个测试，08-05 新增）：
-- 选品报告卡片：基础结构 / 总处理数计算 / 失败警告 / 无失败无警告 / 顶部品类
-- 销售日报卡片：正常绿色标题 / 异常橙色标题 / 异常数显示 / 无异常消息 / AI 洞察显示 / AI 洞察省略
-- 审批卡片：基础结构 / 金额格式 / 通过按钮 value / 拒绝按钮 value / 查看详情按钮 url / 无 url 时不显示查看详情
-- 回调服务：URL 验证返回 challenge / 通过按钮返回成功 / 拒绝按钮返回成功 / 未知 action / 不支持事件类型 / 无效 JSON / 未知回调类型 / 健康检查 / 根路径
+**test_approval.py 覆盖场景**（29 个测试，08-06 新增）：
+- ApprovalClient 配置：全配置通过 / 缺 approval_code / 缺 approver_open_id / 缺 node_id
+- 表单构建：5 个字段完整 / 字段 ID 正确 / 字段值正确 / 中文不转义
+- 创建审批实例：成功返回 instance_code / 未配置返回空 / API 错误返回空
+- 查询审批状态：成功返回详情 / 空 instance_code 返回空 / 中文状态文本 / 查询失败返回未知
+- 状态码映射：包含所有状态码 / 值都是中文
+- 审批状态变更回调：合法事件返回成功 / 缺字段返回失败 / 兼容新格式 schema 2.0
+- ASIN 提取：成功提取 / 无 ASIN 字段返回空 / 查询失败返回空
+- 自动触发任务：未配置返回 0 / 金额提取（数字/字符串/列表/空值/无效值）

@@ -42,6 +42,20 @@ class Settings(BaseSettings):
         description="飞书群聊 ID（应用机器人发送审批卡片等需回调的消息）",
     )
 
+    # 飞书审批流
+    feishu_approval_code: str = Field(
+        default="",
+        description="飞书审批定义 Code（UUID 格式，从审批后台 URL 获取）",
+    )
+    feishu_approval_approver_open_id: str = Field(
+        default="",
+        description="默认审批人 open_id（ou_ 开头），用于创建审批实例时指定审批人",
+    )
+    feishu_approval_node_id: str = Field(
+        default="",
+        description="审批节点 ID（审批流程中'发起人自选审批人'节点的 node_id）",
+    )
+
     # AI 模型
     openai_api_key: str = Field(default="", description="OpenAI API Key")
     anthropic_api_key: str = Field(default="", description="Anthropic API Key")

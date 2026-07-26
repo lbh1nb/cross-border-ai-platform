@@ -120,6 +120,56 @@ class ApplicationBot:
             logger.error(f"应用机器人发送卡片异常: {e}", exc_info=True)
             return False
 
+    def send_text(self, text: str) -> bool:
+        """发送纯文本消息到群聊。
+
+        用于异步回写失败时的告警通知。
+
+        Args:
+            text: 文本内容
+
+        Returns:
+            True 表示发送成功
+        """
+        if not self.is_configured:
+            logger.warning("应用机器人未配置 chat_id，跳过发送")
+            return False
+
+        try:
+            token = get_tenant_access_token()
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json; charset=utf-8",
+            }
+            payload = {
+                "receive_id": self._chat_id,
+                "msg_type": "text",
+                "content": json.dumps({"text": text}, ensure_ascii=False),
+            }
+            params = {"receive_id_type": "chat_id"}
+
+            with httpx.Client(timeout=10) as client:
+                response = client.post(
+                    self._api_base,
+                    headers=headers,
+                    params=params,
+                    json=payload,
+                )
+                data = response.json()
+
+            if data.get("code") == 0:
+                logger.info(f"应用机器人发送文本成功: chat_id={self._chat_id[:20]}...")
+                return True
+
+            logger.error(
+                f"应用机器人发送文本失败: code={data.get('code')}, msg={data.get('msg')}"
+            )
+            return False
+
+        except Exception as e:
+            logger.error(f"应用机器人发送文本异常: {e}", exc_info=True)
+            return False
+
 
 # 全局单例
 application_bot = ApplicationBot()

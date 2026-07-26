@@ -54,6 +54,7 @@ where = ["src"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v --cov=src --cov-report=term-missing"
+asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 100
