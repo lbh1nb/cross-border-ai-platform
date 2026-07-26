@@ -22,17 +22,18 @@ def setup_logger() -> None:
     # 清除默认 handler
     logger.remove()
 
-    # 控制台输出：彩色，带时间、级别、模块、行号
-    logger.add(
-        sys.stderr,
-        level=settings.log_level,
-        format=(
-            "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
-            "<level>{level: <8}</level> | "
-            "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
-            "<level>{message}</level>"
-        ),
-    )
+    # 控制台输出：仅在有终端时启用（pythonw.exe 无终端，跳过）
+    if sys.stderr is not None and sys.stderr.writable():
+        logger.add(
+            sys.stderr,
+            level=settings.log_level,
+            format=(
+                "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
+                "<level>{level: <8}</level> | "
+                "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
+                "<level>{message}</level>"
+            ),
+        )
 
     # 文件输出：按天切割，保留 30 天，自动压缩
     log_dir = Path("logs")
