@@ -252,19 +252,23 @@ flowchart TB
 flowchart LR
     A[业务事件触发] --> B{事件类型}
     B -->|库存紧急| C[build_inventory_alert_card]
-    B -->|日报生成| D[build_daily_report_card 待实现]
-    C --> E[FeishuBot.send_card]
-    D --> E
-    E --> F[POST Webhook URL]
-    F --> G{飞书返回}
-    G -->|code=0| H[发送成功]
-    G -->|code!=0| I[记录错误日志]
-    G -->|HTTP异常| I
+    B -->|选品完成| D[build_selection_report_card]
+    B -->|日报生成| E[build_daily_report_card]
+    B -->|金额超阈值| F[build_approval_card]
+    C --> G[FeishuBot.send_card]
+    D --> G
+    E --> G
+    F --> G
+    G --> H[POST Webhook URL]
+    H --> I{飞书返回}
+    I -->|code=0| J[发送成功]
+    I -->|code!=0| K[记录错误日志]
+    I -->|HTTP异常| K
 
     style A fill:#2d5a3d,color:#fff
-    style C fill:#5a3d2d,color:#fff
-    style E fill:#2d4a5a,color:#fff
-    style H fill:#2d3a5a,color:#fff
+    style F fill:#5a2d2d,color:#fff
+    style G fill:#2d4a5a,color:#fff
+    style J fill:#2d3a5a,color:#fff
 ```
 
 **FeishuBot 类**提供三种消息发送方法：
@@ -272,15 +276,60 @@ flowchart LR
 - `send_rich_text(title, content)`：富文本消息，支持加粗/链接
 - `send_card(card)`：交互卡片，支持按钮和分栏
 
-**卡片模板库**（card_templates.py）：
-- `build_inventory_alert_card()`：库存预警卡片，按等级显示颜色（红/橙/黄/绿）
-- 卡片包含商品信息、可售天数、预警等级、处理建议、跳转按钮
-- 08-05 会扩展选品报告卡片和日报卡片
+**卡片模板库**（card_templates.py）—— 4 类业务卡片：
+
+| 卡片模板 | 用途 | 标题颜色 | 按钮行为 |
+|----------|------|----------|----------|
+| `build_inventory_alert_card()` | 库存预警通知 | red/orange/yellow/green | url 跳转多维表格 |
+| `build_selection_report_card()` | 选品采集日报 | blue | url 跳转选品池表 |
+| `build_daily_report_card()` | 销售日报 | green/orange | url 跳转销售日报表 |
+| `build_approval_card()` | 审批通知 | orange | value 触发回调（通过/拒绝） |
+
+**链接跳转优化**（build_table_url）：
+- 使用企业租户域名（如 `ocndodd7lmyr.feishu.cn`）生成链接
+- 飞书桌面端拦截本企业租户域名，直接在飞书内打开多维表格
+- 避免跳转浏览器需重新登录的体验问题
 
 **告警触发策略**：
 - 仅"紧急"和"预警"等级触发机器人告警（避免告警疲劳）
 - 等级未变化时不重复告警
 - 机器人未配置时静默跳过，不影响表格更新
+
+**卡片按钮回调服务**（card_callback.py，08-05 新增）：
+
+```mermaid
+sequenceDiagram
+    participant User as 飞书用户
+    participant Feishu as 飞书服务器
+    participant Ngrok as ngrok 公网隧道
+    participant Local as 本地 FastAPI 服务
+    participant Handler as 业务处理器
+
+    User->>Feishu: 点击卡片按钮
+    Feishu->>Ngrok: POST /callback (card.action.trigger)
+    Ngrok->>Local: 转发到本地 8000 端口
+    Local->>Local: 1. URL 验证? 返回 challenge
+    Local->>Local: 2. 卡片回调? 路由到 handler
+    Local->>Handler: 调用 _handle_approve / _handle_reject
+    Handler-->>Local: 返回处理结果
+    Local-->>Ngrok: JSON 响应（3秒内）
+    Ngrok-->>Feishu: 转发响应
+    Feishu-->>User: 显示处理结果
+```
+
+**FastAPI 回调服务架构**：
+- 端点：`POST /callback`（接收飞书回调）
+- 端点：`GET /health`（健康检查，用于监控）
+- 端点：`GET /`（服务说明）
+- 支持 URL 验证（飞书首次配置回调 URL 时发送 challenge）
+- 支持 `card.action.trigger` 事件（卡片按钮点击）
+- 内置 2 个 action 处理器：`approve`（审批通过）/ `reject`（审批拒绝）
+- 08-06 会扩展审批回写多维表格的逻辑
+
+**部署要求**：
+- 飞书服务器需要公网可访问的 HTTPS 地址
+- 本地开发用 ngrok 内网穿透（`scripts/start_ngrok.py`）
+- 生产环境部署到云服务器（第4周 Docker 化）
 
 ## 三、数据流
 
@@ -343,11 +392,13 @@ flowchart LR
 | test_feishu_auth.py | 飞书认证 |
 | test_feishu_bitable.py | BitableClient |
 | test_sync_service.py | SyncResult / 字段映射 / SyncService增量同步 / 数据清理任务 |
+| test_feishu_bot.py | Webhook 机器人消息发送 / 库存预警卡片模板 |
+| test_card_callback.py | 选品报告卡片 / 销售日报卡片 / 审批卡片 / FastAPI 回调服务 |
 
-**当前测试结果**：73 个测试全部通过。
+**当前测试结果**：129 个测试全部通过，覆盖率 62%。
 
-**test_sync_service.py 覆盖场景**（28 个测试）：
-- SyncResult 数据类：默认值 / total 属性 / 字符串表示
-- 字段映射：product_to_record 全字段 / 主键提取（多行文本/单选/缺失字段）/ _extract_text 各种格式
-- SyncService 增量同步：全新增 / 全更新 / 混合 / 空输入 / 更新失败计数 / 自定义主键
-- 数据清理任务：时间戳解析（整数/字典含整数/字典含字符串/缺失/无效）/ 清理旧记录 / 空表 / 无时间字段保留
+**test_card_callback.py 覆盖场景**（26 个测试，08-05 新增）：
+- 选品报告卡片：基础结构 / 总处理数计算 / 失败警告 / 无失败无警告 / 顶部品类
+- 销售日报卡片：正常绿色标题 / 异常橙色标题 / 异常数显示 / 无异常消息 / AI 洞察显示 / AI 洞察省略
+- 审批卡片：基础结构 / 金额格式 / 通过按钮 value / 拒绝按钮 value / 查看详情按钮 url / 无 url 时不显示查看详情
+- 回调服务：URL 验证返回 challenge / 通过按钮返回成功 / 拒绝按钮返回成功 / 未知 action / 不支持事件类型 / 无效 JSON / 未知回调类型 / 健康检查 / 根路径

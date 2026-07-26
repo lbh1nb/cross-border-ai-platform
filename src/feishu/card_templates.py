@@ -1,16 +1,19 @@
 """飞书交互卡片模板库。
 
 集中管理各类业务卡片的 JSON 模板，避免在业务代码中硬编码卡片结构。
-08-04 提供"库存预警卡片"，08-05 会扩展"选品报告卡片""日报卡片"。
+08-04 提供"库存预警卡片"，08-05 扩展"选品报告卡片""日报卡片"。
 
 卡片 JSON 结构官方文档：
 https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/ucTM5YjL3ETO24yNxkjN
 
 卡片模板设计原则：
-1. 标题颜色按严重程度区分（red=紧急/orange=预警/yellow=关注/green=正常）
+1. 标题颜色按严重程度区分（red=紧急/orange=预警/yellow=关注/green=正常/blue=普通通知）
 2. 正文用 lark_md 格式，支持加粗、链接
 3. 底部统一放"查看详情"按钮，跳转飞书多维表格
-4. 每个模板函数返回纯 dict，便于测试和复用
+4. 按钮支持两种行为：
+   - url：点击后跳转链接（适合查看详情场景）
+   - value：点击后触发回调（适合审批/操作场景，需 08-05 回调服务支持）
+5. 每个模板函数返回纯 dict，便于测试和复用
 """
 
 from __future__ import annotations
@@ -239,3 +242,391 @@ def build_table_url(table_id: str = "") -> str:
         f"https://{tenant_domain}.feishu.cn/base/{app_token}"
         f"?table={target_table_id}"
     )
+
+
+# ===== 选品报告卡片 =====
+
+
+def build_selection_report_card(
+    date: str,
+    total_configs: int,
+    new_count: int,
+    update_count: int,
+    skip_count: int,
+    fail_count: int,
+    top_categories: list[str] | None = None,
+    table_url: str = "",
+) -> dict[str, Any]:
+    """构建选品采集报告卡片。
+
+    工作日 9:00 自动采集后，向飞书群发送当日采集统计。
+
+    Args:
+        date: 采集日期（如 "2026-07-26"）
+        total_configs: 总配置数
+        new_count: 新增商品数
+        update_count: 更新商品数
+        skip_count: 跳过数（无变化）
+        fail_count: 失败数
+        top_categories: 顶部品类列表（最多展示 3 个）
+        table_url: 选品池表链接（用于"查看选品池"按钮跳转）
+
+    Returns:
+        飞书卡片 JSON 对象
+    """
+    total_processed = new_count + update_count
+    elements: list[dict[str, Any]] = [
+        {
+            "tag": "div",
+            "fields": [
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**采集日期**\n{date}",
+                    },
+                },
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**配置数**\n{total_configs} 条",
+                    },
+                },
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**新增商品**\n**{new_count}** 个",
+                    },
+                },
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**更新商品**\n{update_count} 个",
+                    },
+                },
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**跳过**\n{skip_count} 个",
+                    },
+                },
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**失败**\n{fail_count} 个",
+                    },
+                },
+            ],
+        },
+        {"tag": "hr"},
+        {
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": f"**总处理商品数**：**{total_processed}** 个",
+            },
+        },
+    ]
+
+    # 顶部品类展示
+    if top_categories:
+        categories_text = " / ".join(top_categories[:3])
+        elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": f"**采集品类**：{categories_text}",
+            },
+        })
+
+    # 失败数大于 0 时增加警告
+    if fail_count > 0:
+        elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": f"⚠️ 有 {fail_count} 条配置采集失败，请查看日志排查原因",
+            },
+        })
+
+    # 查看选品池按钮
+    table_url = table_url or build_table_url(settings.feishu_table_id_selection)
+    if table_url:
+        elements.append({
+            "tag": "action",
+            "actions": [
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "查看选品池"},
+                    "url": table_url,
+                    "type": "primary",
+                },
+            ],
+        })
+
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {
+                "tag": "plain_text",
+                "content": f"【选品日报】{date} 采集完成",
+            },
+            "template": "blue",
+        },
+        "elements": elements,
+    }
+
+
+# ===== 日报卡片 =====
+
+
+def build_daily_report_card(
+    date: str,
+    total_sales: float,
+    total_orders: int,
+    avg_acos: float,
+    abnormal_count: int = 0,
+    ai_insight: str = "",
+    table_url: str = "",
+) -> dict[str, Any]:
+    """构建销售日报卡片。
+
+    每天 18:00 自动生成日报后，向飞书群发送当日销售统计。
+
+    Args:
+        date: 日报日期（如 "2026-07-26"）
+        total_sales: 总销售额（美金）
+        total_orders: 总订单数
+        avg_acos: 平均 ACoS（广告成本销售比，百分比）
+        abnormal_count: 异常订单数（如退款率高、ACoS 过高）
+        ai_insight: AI 洞察文本（可选，由第3周 AI Agent 生成）
+        table_url: 销售日报表链接
+
+    Returns:
+        飞书卡片 JSON 对象
+    """
+    # 颜色策略：异常>0 用橙色，否则用绿色（正常）
+    header_color = "orange" if abnormal_count > 0 else "green"
+
+    elements: list[dict[str, Any]] = [
+        {
+            "tag": "div",
+            "fields": [
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**日报日期**\n{date}",
+                    },
+                },
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**总订单数**\n{total_orders} 单",
+                    },
+                },
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**总销售额**\n**${total_sales:,.2f}**",
+                    },
+                },
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**平均 ACoS**\n{avg_acos:.1f}%",
+                    },
+                },
+            ],
+        },
+        {"tag": "hr"},
+    ]
+
+    # 异常订单提示
+    if abnormal_count > 0:
+        elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": f"⚠️ **异常订单**：{abnormal_count} 单，请关注退款率/ACoS 异常",
+            },
+        })
+    else:
+        elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": "✅ 当日无异常订单",
+            },
+        })
+
+    # AI 洞察（可选）
+    if ai_insight:
+        elements.append({"tag": "hr"})
+        elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": f"**AI 洞察**\n{ai_insight}",
+            },
+        })
+
+    # 查看日报按钮
+    table_url = table_url or build_table_url(settings.feishu_table_id_daily_report)
+    if table_url:
+        elements.append({
+            "tag": "action",
+            "actions": [
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "查看销售日报"},
+                    "url": table_url,
+                    "type": "primary",
+                },
+            ],
+        })
+
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {
+                "tag": "plain_text",
+                "content": f"【销售日报】{date}",
+            },
+            "template": header_color,
+        },
+        "elements": elements,
+    }
+
+
+# ===== 审批卡片（带回调按钮）=====
+
+
+def build_approval_card(
+    biz_type: str,
+    biz_id: str,
+    title: str,
+    amount: float,
+    description: str,
+    operator: str = "",
+    table_url: str = "",
+) -> dict[str, Any]:
+    """构建审批卡片（带"通过/拒绝"回调按钮）。
+
+    用于选品金额 > 5000 美金时自动触发审批，用户点击按钮触发回调。
+
+    Args:
+        biz_type: 业务类型（如 "选品采购" / "库存补货"）
+        biz_id: 业务唯一 ID（如 ASIN/SKU）
+        title: 审批标题
+        amount: 审批金额（美金）
+        description: 审批描述
+        operator: 申请人
+        table_url: 关联表格链接
+
+    Returns:
+        飞书卡片 JSON 对象
+
+    注意：
+        按钮使用 value 字段（而非 url），点击后触发 card.action.trigger 回调。
+        回调服务（card_callback.py）接收并处理。
+    """
+    elements: list[dict[str, Any]] = [
+        {
+            "tag": "div",
+            "fields": [
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**业务类型**\n{biz_type}",
+                    },
+                },
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**业务 ID**\n{biz_id}",
+                    },
+                },
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**审批金额**\n**${amount:,.2f}**",
+                    },
+                },
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**申请人**\n{operator or '系统自动触发'}",
+                    },
+                },
+            ],
+        },
+        {"tag": "hr"},
+        {
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": f"**审批说明**\n{description}",
+            },
+        },
+    ]
+
+    # 表格链接按钮（url 跳转）
+    actions: list[dict[str, Any]] = []
+    if table_url:
+        actions.append({
+            "tag": "button",
+            "text": {"tag": "plain_text", "content": "查看详情"},
+            "url": table_url,
+            "type": "default",
+        })
+
+    # 审批按钮（value 回调）
+    actions.append({
+        "tag": "button",
+        "text": {"tag": "plain_text", "content": "✓ 通过"},
+        "value": {
+            "action": "approve",
+            "biz_type": biz_type,
+            "biz_id": biz_id,
+            "amount": amount,
+        },
+        "type": "primary",
+    })
+    actions.append({
+        "tag": "button",
+        "text": {"tag": "plain_text", "content": "✗ 拒绝"},
+        "value": {
+            "action": "reject",
+            "biz_type": biz_type,
+            "biz_id": biz_id,
+            "amount": amount,
+        },
+        "type": "danger",
+    })
+
+    elements.append({"tag": "action", "actions": actions})
+
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {
+                "tag": "plain_text",
+                "content": f"【待审批】{title}",
+            },
+            "template": "orange",
+        },
+        "elements": elements,
+    }
