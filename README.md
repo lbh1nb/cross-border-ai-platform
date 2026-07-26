@@ -74,6 +74,7 @@ cp .env.example .env
 必填配置项：
 - `FEISHU_APP_ID` / `FEISHU_APP_SECRET`：飞书应用凭证
 - `FEISHU_BITABLE_APP_TOKEN`：多维表格 App Token
+- `FEISHU_TENANT_DOMAIN`：飞书企业租户域名（从多维表格 URL 中提取，如 `https://ocndodd7lmyr.feishu.cn/base/xxx` 中的 `ocndodd7lmyr`，用于生成在飞书桌面端可直接打开的链接）
 - `FEISHU_TABLE_ID_*`：5 张业务表的 Table ID
 
 可选配置项：

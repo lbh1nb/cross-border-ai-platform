@@ -22,7 +22,7 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.chdir(project_root)
 sys.path.insert(0, project_root)
 
-from src.feishu.card_templates import build_inventory_alert_card
+from src.feishu.card_templates import build_inventory_alert_card, build_table_url
 from src.feishu.feishu_bot import feishu_bot
 
 
@@ -38,8 +38,10 @@ def test_rich_text_message() -> bool:
 
     注意：飞书 Webhook 富文本只支持 text/a/at 三种标签，不支持 b（加粗）。
     要加粗效果需用交互卡片的 lark_md 格式。
+    链接使用企业租户域名，在飞书桌面端/移动端直接打开多维表格。
     """
     print("\n[测试 2] 发送富文本消息...")
+    table_url = build_table_url()
     return feishu_bot.send_rich_text(
         title="【AI 运营中台】库存预警测试通知",
         content=[
@@ -49,15 +51,19 @@ def test_rich_text_message() -> bool:
             ],
             [
                 {"tag": "text", "text": "详情请查看 "},
-                {"tag": "a", "text": "飞书多维表格", "href": "https://feishu.cn"},
+                {"tag": "a", "text": "飞书多维表格", "href": table_url},
             ],
         ],
     )
 
 
 def test_card_message() -> bool:
-    """测试3：发送库存预警交互卡片。"""
+    """测试3：发送库存预警交互卡片。
+
+    卡片按钮使用企业租户域名链接，点击后直接在飞书内打开多维表格。
+    """
     print("\n[测试 3] 发送库存预警交互卡片...")
+    table_url = build_table_url()
     card = build_inventory_alert_card(
         asin="B08TEST123",
         product_name="测试商品 - 户外折叠椅",
@@ -68,6 +74,7 @@ def test_card_message() -> bool:
         current_stock=25,
         daily_sales=5.0,
         suggested_purchase=100,
+        table_url=table_url,
     )
     return feishu_bot.send_card(card)
 

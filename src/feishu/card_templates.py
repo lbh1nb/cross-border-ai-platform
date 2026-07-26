@@ -171,7 +171,7 @@ def build_inventory_alert_card(
         })
 
     # 添加"查看详情"按钮（跳转多维表格）
-    table_url = table_url or _build_table_url()
+    table_url = table_url or build_table_url()
     if table_url:
         elements.append({
             "tag": "action",
@@ -217,14 +217,25 @@ def _get_alert_suggestion(alert_level: str, stock_days: int) -> str:
     return ""
 
 
-def _build_table_url() -> str:
-    """构建飞书多维表格 URL。
+def build_table_url(table_id: str = "") -> str:
+    """构建飞书多维表格 URL（在飞书桌面端可直接打开，不跳浏览器）。
+
+    使用企业租户域名生成链接（如 https://ocndodd7lmyr.feishu.cn/base/xxx?table=yyy），
+    飞书桌面端会拦截本企业租户域名的链接，直接在飞书内打开多维表格。
+    如果用通用 feishu.cn 域名，飞书桌面端不会拦截，会丢给浏览器导致需重新登录。
+
+    Args:
+        table_id: 表格 ID，留空则用库存预警表 ID
 
     Returns:
-        多维表格访问 URL，若未配置则返回空字符串
+        多维表格 URL，若未配置租户域名或 app_token 则返回空字符串
     """
     app_token = settings.feishu_bitable_app_token
-    table_id = settings.feishu_table_id_inventory
-    if not app_token or not table_id:
+    tenant_domain = settings.feishu_tenant_domain
+    target_table_id = table_id or settings.feishu_table_id_inventory
+    if not app_token or not tenant_domain or not target_table_id:
         return ""
-    return f"https://feishu.cn/base/{app_token}?table={table_id}&view="
+    return (
+        f"https://{tenant_domain}.feishu.cn/base/{app_token}"
+        f"?table={target_table_id}"
+    )

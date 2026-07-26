@@ -22,6 +22,11 @@ class Settings(BaseSettings):
 
     # 飞书多维表格
     feishu_bitable_app_token: str = Field(default="", description="多维表格 App Token")
+    feishu_tenant_domain: str = Field(
+        default="",
+        description="飞书企业租户域名（如 ocndodd7lmyr.feishu.cn 中的 ocndodd7lmyr），"
+        "用于生成在飞书桌面端可直接打开的链接",
+    )
     feishu_table_id_selection: str = Field(default="", description="选品池表 ID")
     feishu_table_id_listing: str = Field(default="", description="Listing 库表 ID")
     feishu_table_id_daily_report: str = Field(default="", description="销售日报表 ID")
