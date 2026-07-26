@@ -1,6 +1,6 @@
 # 项目架构文档
 
-> 跨境电商 AI 运营中台 - 多平台多品类选品采集系统
+> 跨境电商 AI 运营中台 - 多平台多品类选品采集 + 增量同步 + 自动清理系统
 
 ## 一、整体架构
 
@@ -8,17 +8,24 @@
 flowchart TB
     subgraph 配置层
         A1[飞书采集配置表<br/>5品类×3平台=15条配置]
+        A2[field_mapping.py<br/>字段名+主键集中配置]
     end
 
     subgraph 调度层
-        B1[APScheduler<br/>每天9:00触发]
+        B1[APScheduler<br/>4个定时任务]
+        B2[选品采集<br/>工作日9:00]
+        B3[库存检查<br/>每30分钟]
+        B4[数据清理<br/>每3天2:00]
+        B1 --> B2
+        B1 --> B3
+        B1 --> B4
     end
 
     subgraph 采集层
         C1[MockMultiPlatformCollector<br/>多平台模拟采集器]
-        C2[亚马逊采集<br/>BSR排名/评论多]
-        C3[沃尔玛采集<br/>价格低/评论中]
-        C4[Wayfair采集<br/>价格高/评论少]
+        C2[亚马逊采集]
+        C3[沃尔玛采集]
+        C4[Wayfair采集]
         C1 --> C2
         C1 --> C3
         C1 --> C4
@@ -26,27 +33,32 @@ flowchart TB
 
     subgraph 处理层
         D1[DataCleaner<br/>过滤低评分/离谱价]
-        D2[BitableWriter<br/>写入飞书选品池]
+        D2[SyncService<br/>增量同步: 查询现有→分类→批量新增/逐条更新]
     end
 
     subgraph 存储层
-        E1[飞书选品池表<br/>含来源平台字段]
+        E1[飞书多维表格<br/>5张业务表+3个业务视图]
         E2[SQLite<br/>调度器任务持久化]
     end
 
-    A1 -->|读取启用配置| B1
-    B1 -->|循环15条配置| C1
+    A1 -->|读取启用配置| B2
+    A2 -->|字段映射| D2
+    B2 -->|循环15条配置| C1
     C2 --> D1
     C3 --> D1
     C4 --> D1
     D1 --> D2
-    D2 --> E1
+    D2 -->|增量写入| E1
+    B3 -->|更新预警等级| E1
+    B4 -->|删除旧数据| E1
     B1 -.->|持久化任务| E2
 
     style A1 fill:#2d5a3d,color:#fff
+    style A2 fill:#2d5a3d,color:#fff
     style B1 fill:#4a3d2d,color:#fff
     style C1 fill:#2d4a5a,color:#fff
     style D1 fill:#5a2d4a,color:#fff
+    style D2 fill:#5a3d2d,color:#fff
     style E1 fill:#2d3a5a,color:#fff
 ```
 
@@ -100,16 +112,46 @@ classDiagram
 - 默认 5 个家具品类：家居收纳、厨房用品、户外家具、办公家具、卧室家具
 - 未知品类自动回退到默认模板，保证企业自定义品类也能采集到合理数据
 
-### 2.3 处理层（src/pipeline/）
+### 2.3 处理层（src/pipeline/ + src/feishu/sync_service.py）
 
 **清洗器**（DataCleaner）：
 - 过滤评分 < 3.8 的商品
 - 过滤价格 < 10 美金 或 > 500 美金的商品
 - 过滤 BSR 排名 > 30000 的商品
 
-**写入器**（BitableWriter）：
-- 批量写入飞书选品池表
-- 字段映射由 `ProductInfo.to_bitable_record()` 完成
+**同步服务**（SyncService）—— 增量同步核心：
+
+```mermaid
+flowchart LR
+    A[输入: 新数据列表] --> B[查询飞书现有记录]
+    B --> C[构建主键索引<br/>primary_value -> record_id]
+    C --> D{遍历每条新数据}
+    D -->|主键已存在| E[分类: 更新队列]
+    D -->|主键不存在| F[分类: 新增队列]
+    E --> G[逐条 update_record]
+    F --> H[批量 batch_add_records]
+    G --> I[统计 SyncResult]
+    H --> I
+    I --> J[返回: 新增/更新/跳过/失败]
+
+    style A fill:#2d5a3d,color:#fff
+    style C fill:#2d4a5a,color:#fff
+    style E fill:#5a2d4a,color:#fff
+    style F fill:#5a3d2d,color:#fff
+    style I fill:#2d3a5a,color:#fff
+```
+
+**主键配置**（field_mapping.py 集中管理）：
+| 表 | 主键 | 用途 |
+|----|------|------|
+| 选品池 | ASIN + 来源平台 | 同一商品在同一平台不重复 |
+| 库存预警 | SKU | 同一 SKU 不重复 |
+| 销售日报 | 日期 + 平台 | 同一天同平台只有一条日报 |
+
+**字段映射**（field_mapping.py）：
+- 集中管理所有表的字段名配置，避免硬编码散落
+- 提供 `product_to_record()` 转换函数
+- 提供 `extract_primary_values()` 主键提取函数（兼容多行文本/单选/数字/超链接等格式）
 
 ### 2.4 调度层（src/scheduler/）
 
@@ -118,34 +160,84 @@ sequenceDiagram
     participant S as SchedulerManager
     participant T as tasks.py
     participant C as 多平台采集器
+    participant Sync as SyncService
     participant F as 飞书API
 
-    S->>T: 每天9:00触发 product_collection_task
+    S->>T: 工作日9:00 触发 product_collection_task
     T->>F: 读取"采集配置"表所有启用记录
     F-->>T: 返回15条配置
     loop 每条配置
         T->>C: collect(品类, 数量, 平台)
         C-->>T: 返回5个商品
         T->>T: 清洗过滤
-        T->>F: 批量写入选品池表
-        F-->>T: 返回record_id列表
+        T->>Sync: sync_products(商品列表)
+        Sync->>F: 查询现有记录构建主键索引
+        F-->>Sync: 返回现有记录
+        Sync->>Sync: 分类: 新增 vs 更新
+        alt 新增
+            Sync->>F: batch_add_records
+        else 更新
+            Sync->>F: update_record (逐条)
+        end
+        F-->>Sync: 返回结果
+        Sync-->>T: 返回 SyncResult
     end
-    T-->>S: 返回总写入数
+    T-->>S: 返回总新增+更新数
 ```
 
 **任务列表**：
 | 任务 ID | 触发时间 | 功能 |
 |---------|----------|------|
-| product_collection | 每天 9:00 | 多平台多品类选品采集 |
+| product_collection | 工作日 9:00 | 多平台多品类增量同步采集 |
 | inventory_check | 每 30 分钟 | 库存预警等级更新 |
 | daily_report | 每天 18:00 | 日报生成（预留） |
+| data_cleanup | 每 3 天 2:00 | 删除旧数据防止堆积 |
+
+**数据清理任务**（cleanup_task.py）：
+
+```mermaid
+flowchart TB
+    A[每3天凌晨2:00触发] --> B[读取 DATA_RETENTION_DAYS 配置]
+    B --> C{遍历 3 张业务表}
+    C --> D[选品池: 按'分析时间'判断]
+    C --> E[库存预警: 按'更新时间'判断]
+    C --> F[销售日报: 按'日期'判断]
+    D --> G[查询全部记录]
+    E --> G
+    F --> G
+    G --> H{时间戳 < cutoff?}
+    H -->|是| I[加入删除队列]
+    H -->|否| J[保留]
+    I --> K[batch_delete_records 批量删除]
+    K --> L[返回清理统计]
+
+    style A fill:#4a3d2d,color:#fff
+    style B fill:#2d4a5a,color:#fff
+    style K fill:#5a2d4a,color:#fff
+    style L fill:#2d3a5a,color:#fff
+```
+
+**清理策略**：
+- 保留最近 3 天数据（可通过 `DATA_RETENTION_DAYS` 环境变量配置）
+- 没有时间字段的记录保留（安全策略，不删未知数据）
+- 飞书 API 单次最多删除 500 条，自动分批
+- **不清理**：采集配置表（企业长期配置）/ Listing 库表（保留优化历史）
 
 ### 2.5 飞书中台（src/feishu/）
 
 **BitableClient** 提供完整的飞书多维表格 API 封装：
 - 表管理：create_table / list_tables / list_fields / add_field
-- 记录管理：add_record / batch_add_records / query_records / update_record / delete_record
+- 记录管理：add_record / batch_add_records / query_records / update_record / delete_record / batch_delete_records
+- 视图管理：list_views / create_view / patch_view（含字段隐藏配置）
 - 错误处理：3 次重试 + 指数退避
+
+**业务视图**（通过 scripts/init_views.py 创建）：
+
+| 视图名 | 所属表 | 显示字段 |
+|--------|--------|----------|
+| 销售总览 | 销售日报 | 日期/平台/销售额/订单数/ACoS/异常标记/AI洞察 |
+| 预警看板 | 库存预警 | ASIN/商品名称/SKU/平台/可售天数/预警等级/建议采购量/预估采购金额/审批状态 |
+| 选品决策 | 选品池 | 商品名称/ASIN/品类/来源平台/价格区间/评分/评论数/市场容量/竞争强度/利润空间/推荐指数/状态 |
 
 **表结构**（5 张表）：
 1. **选品池**：商品名/ASIN/品类/来源平台/价格/评分/评论数/BSR/市场容量/竞争强度/利润空间
@@ -153,6 +245,42 @@ sequenceDiagram
 3. **销售日报**：每日销售数据 + AI 洞察
 4. **库存预警**：库存监控与自动审批
 5. **采集配置**：企业经营品类与采集平台配置
+
+**Webhook 机器人**（feishu_bot.py）：
+
+```mermaid
+flowchart LR
+    A[业务事件触发] --> B{事件类型}
+    B -->|库存紧急| C[build_inventory_alert_card]
+    B -->|日报生成| D[build_daily_report_card 待实现]
+    C --> E[FeishuBot.send_card]
+    D --> E
+    E --> F[POST Webhook URL]
+    F --> G{飞书返回}
+    G -->|code=0| H[发送成功]
+    G -->|code!=0| I[记录错误日志]
+    G -->|HTTP异常| I
+
+    style A fill:#2d5a3d,color:#fff
+    style C fill:#5a3d2d,color:#fff
+    style E fill:#2d4a5a,color:#fff
+    style H fill:#2d3a5a,color:#fff
+```
+
+**FeishuBot 类**提供三种消息发送方法：
+- `send_text(text)`：纯文本消息，最简通知
+- `send_rich_text(title, content)`：富文本消息，支持加粗/链接
+- `send_card(card)`：交互卡片，支持按钮和分栏
+
+**卡片模板库**（card_templates.py）：
+- `build_inventory_alert_card()`：库存预警卡片，按等级显示颜色（红/橙/黄/绿）
+- 卡片包含商品信息、可售天数、预警等级、处理建议、跳转按钮
+- 08-05 会扩展选品报告卡片和日报卡片
+
+**告警触发策略**：
+- 仅"紧急"和"预警"等级触发机器人告警（避免告警疲劳）
+- 等级未变化时不重复告警
+- 机器人未配置时静默跳过，不影响表格更新
 
 ## 三、数据流
 
@@ -166,14 +294,28 @@ flowchart LR
         P1[读取配置]
         P2[多平台采集<br/>75个商品]
         P3[清洗过滤<br/>剔除低质量]
-        P4[批量写入飞书]
+        P4[SyncService增量同步<br/>去重+分类]
     end
 
     subgraph 输出
         O1[飞书选品池表<br/>含来源平台字段]
+        O2[SyncResult统计<br/>新增/更新/跳过]
+    end
+
+    subgraph 周期维护
+        M1[每3天凌晨2:00<br/>数据清理任务]
+        M2[删除超过3天的旧数据]
     end
 
     I1 --> P1 --> P2 --> P3 --> P4 --> O1
+    P4 -.->|统计| O2
+    M1 --> M2 -.->|清理| O1
+
+    style I1 fill:#2d5a3d,color:#fff
+    style P4 fill:#5a3d2d,color:#fff
+    style O1 fill:#2d3a5a,color:#fff
+    style O2 fill:#2d3a5a,color:#fff
+    style M1 fill:#4a3d2d,color:#fff
 ```
 
 ## 四、扩展性设计
@@ -197,8 +339,15 @@ flowchart LR
 |----------|----------|
 | test_collectors.py | ProductInfo / MockAmazonCollector / MockMultiPlatformCollector |
 | test_cleaners.py | DataCleaner 过滤逻辑 |
-| test_scheduler.py | InventoryAlert / SchedulerManager |
+| test_scheduler.py | InventoryAlert / SchedulerManager（4个任务注册） |
 | test_feishu_auth.py | 飞书认证 |
 | test_feishu_bitable.py | BitableClient |
+| test_sync_service.py | SyncResult / 字段映射 / SyncService增量同步 / 数据清理任务 |
 
-**当前测试结果**：27 个测试全部通过，覆盖率 45%。
+**当前测试结果**：73 个测试全部通过。
+
+**test_sync_service.py 覆盖场景**（28 个测试）：
+- SyncResult 数据类：默认值 / total 属性 / 字符串表示
+- 字段映射：product_to_record 全字段 / 主键提取（多行文本/单选/缺失字段）/ _extract_text 各种格式
+- SyncService 增量同步：全新增 / 全更新 / 混合 / 空输入 / 更新失败计数 / 自定义主键
+- 数据清理任务：时间戳解析（整数/字典含整数/字典含字符串/缺失/无效）/ 清理旧记录 / 空表 / 无时间字段保留

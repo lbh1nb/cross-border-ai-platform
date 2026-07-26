@@ -1,0 +1,230 @@
+"""飞书交互卡片模板库。
+
+集中管理各类业务卡片的 JSON 模板，避免在业务代码中硬编码卡片结构。
+08-04 提供"库存预警卡片"，08-05 会扩展"选品报告卡片""日报卡片"。
+
+卡片 JSON 结构官方文档：
+https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/ucTM5YjL3ETO24yNxkjN
+
+卡片模板设计原则：
+1. 标题颜色按严重程度区分（red=紧急/orange=预警/yellow=关注/green=正常）
+2. 正文用 lark_md 格式，支持加粗、链接
+3. 底部统一放"查看详情"按钮，跳转飞书多维表格
+4. 每个模板函数返回纯 dict，便于测试和复用
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from src.config import settings
+
+
+# 预警等级 -> 卡片标题颜色映射
+ALERT_TEMPLATE_MAP = {
+    "紧急": "red",
+    "预警": "orange",
+    "关注": "yellow",
+    "正常": "green",
+}
+
+
+def build_inventory_alert_card(
+    asin: str,
+    product_name: str,
+    sku: str,
+    platform: str,
+    stock_days: int,
+    alert_level: str,
+    current_stock: int = 0,
+    daily_sales: float = 0.0,
+    suggested_purchase: int = 0,
+    table_url: str = "",
+) -> dict[str, Any]:
+    """构建库存预警交互卡片。
+
+    当库存低于阈值时，发送此卡片到飞书群，包含商品信息和处理建议。
+
+    Args:
+        asin: 商品 ASIN
+        product_name: 商品名称
+        sku: 商品 SKU
+        platform: 所属平台（亚马逊/沃尔玛/Wayfair）
+        stock_days: 可售天数
+        alert_level: 预警等级（紧急/预警/关注/正常）
+        current_stock: 当前库存数量
+        daily_sales: 日均销量
+        suggested_purchase: 建议采购量
+        table_url: 多维表格链接（用于"查看详情"按钮跳转）
+
+    Returns:
+        飞书卡片 JSON 对象
+
+    示例：
+        card = build_inventory_alert_card(
+            asin="B08X4ABC",
+            product_name="户外折叠椅",
+            sku="CHAIR-001",
+            platform="亚马逊",
+            stock_days=5,
+            alert_level="紧急",
+            current_stock=25,
+            daily_sales=5.0,
+            suggested_purchase=100,
+        )
+        feishu_bot.send_card(card)
+    """
+    template_color = ALERT_TEMPLATE_MAP.get(alert_level, "blue")
+
+    # 构建卡片正文内容（lark_md 格式，支持加粗和链接）
+    elements: list[dict[str, Any]] = [
+        {
+            "tag": "div",
+            "fields": [
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**商品名称**\n{product_name}",
+                    },
+                },
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**所属平台**\n{platform}",
+                    },
+                },
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**ASIN**\n{asin}",
+                    },
+                },
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**SKU**\n{sku}",
+                    },
+                },
+            ],
+        },
+        {
+            "tag": "hr",
+        },
+        {
+            "tag": "div",
+            "fields": [
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**当前库存**\n{current_stock} 件",
+                    },
+                },
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**日均销量**\n{daily_sales:.1f} 件/天",
+                    },
+                },
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**可售天数**\n**{stock_days} 天**",
+                    },
+                },
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**预警等级**\n**{alert_level}**",
+                    },
+                },
+            ],
+        },
+    ]
+
+    # 建议采购量（仅当有值时显示）
+    if suggested_purchase > 0:
+        elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": f"**建议采购量**：{suggested_purchase} 件",
+            },
+        })
+
+    # 添加处理建议
+    suggestion_text = _get_alert_suggestion(alert_level, stock_days)
+    if suggestion_text:
+        elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": f"**处理建议**：{suggestion_text}",
+            },
+        })
+
+    # 添加"查看详情"按钮（跳转多维表格）
+    table_url = table_url or _build_table_url()
+    if table_url:
+        elements.append({
+            "tag": "action",
+            "actions": [
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "查看库存详情"},
+                    "url": table_url,
+                    "type": "primary",
+                },
+            ],
+        })
+
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {
+                "tag": "plain_text",
+                "content": f"【{alert_level}】库存预警通知",
+            },
+            "template": template_color,
+        },
+        "elements": elements,
+    }
+
+
+def _get_alert_suggestion(alert_level: str, stock_days: int) -> str:
+    """根据预警等级返回处理建议文案。
+
+    Args:
+        alert_level: 预警等级
+        stock_days: 可售天数
+
+    Returns:
+        处理建议文本
+    """
+    if alert_level == "紧急":
+        return f"可售天数仅 {stock_days} 天，请立即启动紧急采购流程，避免断货"
+    if alert_level == "预警":
+        return f"可售天数 {stock_days} 天，建议本周内安排补货"
+    if alert_level == "关注":
+        return f"可售天数 {stock_days} 天，请关注销售趋势，准备补货计划"
+    return ""
+
+
+def _build_table_url() -> str:
+    """构建飞书多维表格 URL。
+
+    Returns:
+        多维表格访问 URL，若未配置则返回空字符串
+    """
+    app_token = settings.feishu_bitable_app_token
+    table_id = settings.feishu_table_id_inventory
+    if not app_token or not table_id:
+        return ""
+    return f"https://feishu.cn/base/{app_token}?table={table_id}&view="

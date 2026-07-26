@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     purchase_approval_threshold: float = Field(
         default=5000, description="选品金额阈值（美金，超过触发审批）"
     )
+    data_retention_days: int = Field(
+        default=3, description="数据保留天数（超过此天数的数据将被自动清理）"
+    )
 
     # 日志
     log_level: str = Field(default="INFO", description="日志级别")
