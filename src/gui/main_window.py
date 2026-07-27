@@ -9,6 +9,7 @@
     | 任务  |                          |
     | 看板  |                          |
     | 检查  |                          |
+    | Agent|                          |
     | 手册  |                          |
     +------+--------------------------+
 """
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.gui.pages.ai_agent_page import AiAgentPage
 from src.gui.pages.approval_page import ApprovalPage
 from src.gui.pages.config_page import ConfigPage
 from src.gui.pages.dashboard_page import DashboardPage
@@ -64,6 +66,7 @@ class MainWindow(QMainWindow):
         self.task_page = TaskPage()
         self.dashboard_page = DashboardPage()
         self.health_check_page = HealthCheckPage()
+        self.ai_agent_page = AiAgentPage()
         self.manual_page = ManualPage()
 
         # 顺序必须与侧边栏 items 一致
@@ -73,6 +76,7 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.task_page)
         self.stack.addWidget(self.dashboard_page)
         self.stack.addWidget(self.health_check_page)
+        self.stack.addWidget(self.ai_agent_page)
         self.stack.addWidget(self.manual_page)
         layout.addWidget(self.stack, stretch=1)
 
@@ -110,6 +114,7 @@ class MainWindow(QMainWindow):
             "⚙️  任务控制",
             "📊  数据看板",
             "🔍  健康检查",
+            "🤖  AI Agent",
             "📖  操作手册",
         ]
         for text in items:
@@ -138,8 +143,11 @@ class MainWindow(QMainWindow):
         if row == 4:
             self.dashboard_page.refresh_data()
         # 切换到健康检查页时不自动跑，让用户主动点
-        # 切换到操作手册时重新加载（用户可能改过文件）
+        # 切换到 AI Agent 页时刷新 API Key 状态
         if row == 6:
+            self.ai_agent_page._update_api_status()
+        # 切换到操作手册时重新加载（用户可能改过文件）
+        if row == 7:
             self.manual_page._load_manual()
 
     def _goto_page(self, page_id: str) -> None:
@@ -153,7 +161,8 @@ class MainWindow(QMainWindow):
                 "task" → 任务控制 (3)
                 "dashboard" → 数据看板 (4)
                 "health" → 健康检查 (5)
-                "manual" → 操作手册 (6)
+                "ai_agent" → AI Agent (6)
+                "manual" → 操作手册 (7)
         """
         page_map = {
             "wizard": 0,
@@ -162,7 +171,8 @@ class MainWindow(QMainWindow):
             "task": 3,
             "dashboard": 4,
             "health": 5,
-            "manual": 6,
+            "ai_agent": 6,
+            "manual": 7,
         }
         row = page_map.get(page_id, 0)
         self.nav.setCurrentRow(row)

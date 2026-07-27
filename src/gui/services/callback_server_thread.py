@@ -57,11 +57,15 @@ class CallbackServerThread(QThread):
 
         try:
             # 用 Config + Server 方式，便于外部通过 should_exit 优雅停止
+            # log_config=None 禁用 uvicorn 自带的 logging 配置
+            # （在 loguru + PyInstaller 打包环境下，uvicorn 默认日志配置会报
+            #   "Unable to configure formatter 'default'" 错误，让 loguru 接管即可）
             config = uvicorn.Config(
                 _CALLBACK_APP,
                 host=_HOST,
                 port=_PORT,
                 log_level=_LOG_LEVEL,
+                log_config=None,
             )
             self._server = uvicorn.Server(config)
 

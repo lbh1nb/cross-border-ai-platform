@@ -72,6 +72,17 @@ class Settings(BaseSettings):
 
     # AI 模型
     openai_api_key: str = Field(default="", description="OpenAI API Key")
+    # OpenAI 兼容接口的 Base URL（v0.5.1 新增）
+    # 留空走 OpenAI 官方（https://api.openai.com/v1，国内需代理）
+    # 填国内大模型的兼容端点即可切换到该模型，常见值：
+    #   DeepSeek:     https://api.deepseek.com/v1
+    #   通义千问:      https://dashscope.aliyuncs.com/compatible-mode/v1
+    #   智谱 GLM:     https://open.bigmodel.cn/api/paas/v4/
+    #   月之暗面 Kimi: https://api.moonshot.cn/v1
+    openai_api_base: str = Field(
+        default="",
+        description="OpenAI 兼容接口的 Base URL，留空走官方，填国内大模型兼容端点可切换",
+    )
     anthropic_api_key: str = Field(default="", description="Anthropic API Key")
 
     # 业务配置

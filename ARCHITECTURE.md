@@ -488,6 +488,167 @@ flowchart LR
 - 日志刷新用 QTimer 每秒读取日志文件
 - 业务日志通过关键词过滤技术噪音，仅保留"采集了X个商品""触发X条审批"等大白话消息
 
+### 2.7 AI 调度层 + 选品 Agent（src/ai/，v0.5.0 新增）
+
+**AI 调度层**为 Agent 提供模型路由、Prompt 管理和工具注册三大基础能力，业务代码只关心"做什么任务"，不关心"用哪个模型"。
+
+```mermaid
+flowchart TB
+    subgraph 调度层[AI 调度层]
+        R[ModelRouter<br/>多模型路由]
+        P[PromptManager<br/>Prompt 模板]
+        T[ToolRegistry<br/>工具注册中心]
+    end
+
+    subgraph 选品Agent[选品分析 Agent - ReAct 模式]
+        A1[create_agent<br/>LangChain v1.0]
+        A2[fetch_products<br/>抓取商品]
+        A3[analyze_products<br/>LLM 分析]
+        A4[save_report<br/>保存+推送]
+    end
+
+    subgraph 外部依赖
+        LLM[LLM 服务<br/>Anthropic/OpenAI]
+        FS[飞书多维表格<br/>+ 应用机器人]
+        COL[MockAmazonCollector<br/>商品采集]
+    end
+
+    R --> LLM
+    A1 --> R
+    A1 --> A2
+    A1 --> A3
+    A1 --> A4
+    A2 --> COL
+    A3 --> R
+    A3 --> P
+    A4 --> FS
+
+    style R fill:#2d5a3d,color:#fff
+    style P fill:#2d4a5a,color:#fff
+    style T fill:#5a2d4a,color:#fff
+    style A1 fill:#5a3d2d,color:#fff
+    style LLM fill:#2d3a5a,color:#fff
+```
+
+**ModelRouter 多模型路由**（`src/ai/model_router.py`）：
+- 按任务复杂度自动选择模型：simple（便宜）/ standard（中等）/ complex（强模型）
+- 优先 Anthropic（Claude），凭证缺失时回退 OpenAI
+- 创建 LLM 时自动挂载 `llm_monitor` 回调（可观测性）
+
+| 任务类型 | Anthropic 模型 | OpenAI 模型 | 适用场景 |
+|----------|----------------|-------------|----------|
+| simple | claude-haiku-4-5 | gpt-4o-mini | 分类、提取、摘要 |
+| standard | claude-sonnet-4-6 | gpt-4o | 分析、生成、翻译 |
+| complex | claude-opus-4-8 | gpt-4o | 多步推理、Agent 决策 |
+
+**PromptManager 模板管理**（`src/ai/prompt_manager.py`）：
+- 集中管理选品 Agent 的 3 个 Prompt：selection_system / selection_analysis / selection_report
+- 基于 LangChain ChatPromptTemplate，支持变量渲染
+- 模板硬编码在模块中（v0.6.0 计划支持从文件加载）
+
+**选品 Agent 工作流**（`src/ai/agents/selection_agent.py`）：
+
+```mermaid
+sequenceDiagram
+    participant User as 业务用户
+    participant GUI as AI Agent 页面
+    participant Worker as 后台线程
+    participant Agent as create_agent
+    participant Tools as 3 个工具
+    participant LLM as LLM 服务
+    participant FS as 飞书
+
+    User->>GUI: 选品类 + 点"运行 Agent"
+    GUI->>Worker: 启动后台线程（避免阻塞 UI）
+    Worker->>Agent: invoke(用户消息)
+    Agent->>LLM: 决策调用哪个工具
+    LLM-->>Agent: 调用 fetch_products
+    Agent->>Tools: fetch_products(品类, 10)
+    Tools->>Tools: MockAmazonCollector 采集
+    Tools-->>Agent: 返回商品 JSON
+    Agent->>LLM: 决策下一步
+    LLM-->>Agent: 调用 analyze_products
+    Agent->>Tools: analyze_products(品类, 商品JSON)
+    Tools->>LLM: 用 selection_analysis Prompt 分析
+    LLM-->>Tools: 返回结构化分析结果
+    Tools-->>Agent: 返回分析 JSON
+    Agent->>LLM: 决策下一步
+    LLM-->>Agent: 调用 save_report
+    Agent->>Tools: save_report(分析JSON)
+    Tools->>FS: 写入多维表格 + 推送飞书群
+    Tools-->>Agent: 返回保存结果
+    Agent-->>Worker: 返回最终总结
+    Worker-->>GUI: 显示结果 + 日志
+```
+
+**GUI 入口**（`src/gui/pages/ai_agent_page.py`）：
+- 品类下拉框（5 个默认品类，可自定义）+ 运行按钮
+- 后台线程执行 Agent（避免 30-60 秒的 LLM 调用阻塞 UI）
+- 实时日志显示（黑色背景，终端风格）
+- 结果表格（自动解析 Agent 输出中的 top_picks）
+- API Key 状态提示（未配置时橙色警告）
+
+### 2.8 可观测性模块（src/observability/，v0.5.0 新增）
+
+**LLM 调用监控闭环**：自动记录每次 LLM 调用的耗时、Token、成本，失败率超阈值时飞书告警。
+
+```mermaid
+flowchart LR
+    A[LLM.invoke 触发] --> B[on_llm_start<br/>记录开始时间+模型名+输入]
+    B --> C[LLM 执行]
+    C --> D{执行结果}
+    D -->|成功| E[on_llm_end<br/>提取 token+计算成本]
+    D -->|失败| F[on_llm_error<br/>记录错误]
+    E --> G[metrics_store<br/>写入 SQLite]
+    F --> G
+    F --> H[alert_checker<br/>检查失败率]
+    H --> I{失败率 > 10%<br/>且总数 >= 10?}
+    I -->|是| J[发送飞书告警<br/>30 分钟冷却]
+    I -->|否| K[静默]
+    G --> L[统计查询<br/>成功率/耗时/成本]
+
+    style A fill:#2d5a3d,color:#fff
+    style E fill:#2d4a5a,color:#fff
+    style F fill:#5a2d2d,color:#fff
+    style G fill:#2d3a5a,color:#fff
+    style J fill:#5a3d2d,color:#fff
+```
+
+**三大组件**：
+
+| 组件 | 文件 | 职责 |
+|------|------|------|
+| LLMCallMonitor | llm_monitor.py | LangChain Callback，自动拦截 LLM 调用 |
+| MetricsStore | metrics_store.py | SQLite 持久化调用日志，支持统计查询 |
+| AlertChecker | alert.py | 失败率 >10% 触发飞书告警，30 分钟冷却 |
+
+**LLMCallMonitor 工作原理**：
+- 继承 LangChain `BaseCallbackHandler`
+- 在 `ModelRouter._create_anthropic_llm` / `_create_openai_llm` 中通过 `callbacks=[llm_monitor]` 挂载
+- 业务代码零侵入，所有 LLM 调用自动被监控
+
+**MetricsStore SQLite 表结构**：
+- 数据库位置：`data/llm_metrics.db`（开发模式）/ exe 同目录（打包模式）
+- 字段：call_id / model_name / input_summary / output_summary / duration_ms / input_tokens / output_tokens / cost_usd / success / error_message / created_at
+- 查询接口：`get_stats(hours)` 返回成功率/失败率/平均耗时/总成本；`get_recent_calls(limit)` 返回最近记录
+- 自动清理：`cleanup(days=30)` 删除超过 30 天的旧记录
+
+**AlertChecker 告警阈值**：
+- 触发条件（全部满足）：近 1 小时调用数 >= 10 且失败率 > 10%
+- 冷却时间：30 分钟内同一告警只发送一次
+- 告警通道：优先应用机器人（application_bot），失败回退 Webhook 机器人（feishu_bot）
+- 告警内容：时间 / 统计窗口 / 总调用数 / 成功失败数 / 失败率 / 平均耗时 / 总成本
+
+**成本估算表**（每 1K token 价格，美元）：
+
+| 模型 | 输入价格 | 输出价格 |
+|------|----------|----------|
+| claude-haiku-4-5 | $0.001 | $0.005 |
+| claude-sonnet-4-6 | $0.003 | $0.015 |
+| claude-opus-4-8 | $0.015 | $0.075 |
+| gpt-4o-mini | $0.00015 | $0.0006 |
+| gpt-4o | $0.005 | $0.015 |
+
 ---
 
 ## 七、部署向导 + 回调服务架构（v0.4.0 新增）

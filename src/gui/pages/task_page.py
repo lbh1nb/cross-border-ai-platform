@@ -553,21 +553,14 @@ class TaskPage(QWidget):
     # ============ Cloudflare 隧道控制 ============
 
     def _on_tunnel_start(self) -> None:
-        """启动 Cloudflare 隧道。"""
-        if self._tunnel_thread and self._tunnel_thread.isRunning():
-            return
+        """启动 Cloudflare 隧道。
 
-        # 先检查 cloudflared 是否已安装
-        if not CloudflareTunnelThread.is_cloudflared_installed():
-            self.tunnel_status_label.setText("● 未安装 cloudflared")
-            self.tunnel_status_label.setStyleSheet(
-                "font-size: 13px; color: #e74c3c; font-weight: bold;"
-            )
-            self.tunnel_url_label.setText(
-                "未检测到 cloudflared，请先下载安装：\n"
-                "https://github.com/cloudflare/cloudflared/releases\n"
-                "下载后解压到任意目录，并把该目录加到系统 PATH 环境变量。"
-            )
+        注意：不在这里预检查 cloudflared 是否安装，因为线程内部
+        （CloudflareTunnelThread.run()）已有完整的自动下载逻辑。
+        之前在这里调用 CloudflareTunnelThread.is_cloudflared_installed()
+        会因该方法不存在而抛 AttributeError，导致按钮点击无反应。
+        """
+        if self._tunnel_thread and self._tunnel_thread.isRunning():
             return
 
         self.tunnel_start_btn.setEnabled(False)

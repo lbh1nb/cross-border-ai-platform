@@ -37,6 +37,9 @@ HINTS = {
     "webhook": '获取方式：飞书群聊 → 设置 → 群机器人 → 添加机器人 → 自定义机器人 → 复制 Webhook 地址。\n格式：https://open.feishu.cn/open-apis/bot/v2/hook/xxx',
     "chat_id": '获取方式：群机器人必须是"应用机器人"而非"自定义机器人"才能拿 Chat ID。\n用飞书开放平台的通讯录 API 查询群列表，oc_ 开头。\n作用：应用机器人发消息到这个群。',
     "approver": '获取方式：飞书开放平台 → 通讯录 → 搜索审批人姓名 → 复制 open_id。\n格式：ou_ 开头。\n作用：审批流默认审批人（多审批流时每个规则可单独指定）。',
+    "ai_base": '国内用户推荐填 DeepSeek：https://api.deepseek.com/v1\n其他可选：\n  通义千问：https://dashscope.aliyuncs.com/compatible-mode/v1\n  智谱 GLM：https://open.bigmodel.cn/api/paas/v4/\n  Kimi：https://api.moonshot.cn/v1\n留空走 OpenAI 官方（国内需代理）。\n作用：让 AI Agent 用国内大模型，避免国外 API 访问超时。',
+    "ai_key": '获取方式：在上面选的国内大模型平台注册账号 → 充值 → 创建 API Key。\n例如 DeepSeek 在 https://platform.deepseek.com 创建。\n格式：sk- 开头。\n作用：调用大模型的凭证，没有 Key Agent 跑不起来。',
+    "ai_anthropic": '获取方式：https://console.anthropic.com 注册并创建 API Key。\n格式：sk-ant- 开头。\n作用：用 Claude 模型（国内访问需代理）。留空走上面配置的国内大模型。',
 }
 
 
@@ -110,6 +113,10 @@ class ConfigPage(QWidget):
         # 机器人组
         bot_group = self._build_bot_group()
         layout.addWidget(bot_group)
+
+        # AI 模型配置组
+        ai_group = self._build_ai_group()
+        layout.addWidget(ai_group)
 
         # 业务配置组
         biz_group = self._build_biz_group()
@@ -283,9 +290,41 @@ class ConfigPage(QWidget):
                 "记得点页面底部的『保存配置』按钮。"
             )
 
+    def _build_ai_group(self) -> QGroupBox:
+        """AI 模型配置组（v0.5.1 新增）。
+
+        支持三种配置方式（业务用户三选一）：
+        1. 国内大模型（推荐 DeepSeek）：填 OpenAI API Base + OpenAI API Key
+        2. OpenAI 官方（需代理）：仅填 OpenAI API Key，留空 Base
+        3. Anthropic Claude：填 Anthropic API Key
+        """
+        group = QGroupBox("④ AI 模型配置（运行 Agent 必填，三选一）")
+        group.setStyleSheet(self._group_style())
+        layout = QVBoxLayout(group)
+        layout.setSpacing(8)
+
+        # OpenAI API Base（国内大模型的关键配置）
+        self.openai_base_input = QLineEdit()
+        self.openai_base_input.setPlaceholderText("https://api.deepseek.com/v1")
+        _make_field_row(layout, "OpenAI API Base（国内大模型填这里）", self.openai_base_input, HINTS["ai_base"])
+
+        # OpenAI API Key
+        self.openai_key_input = QLineEdit()
+        self.openai_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.openai_key_input.setPlaceholderText("sk-xxxxxxxxxxxxxxxx")
+        _make_field_row(layout, "OpenAI API Key", self.openai_key_input, HINTS["ai_key"])
+
+        # Anthropic API Key（可选，Claude 用户填）
+        self.anthropic_key_input = QLineEdit()
+        self.anthropic_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.anthropic_key_input.setPlaceholderText("sk-ant-xxxxxxxxxxxxxxxx")
+        _make_field_row(layout, "Anthropic API Key（可选，Claude 用户填）", self.anthropic_key_input, HINTS["ai_anthropic"])
+
+        return group
+
     def _build_biz_group(self) -> QGroupBox:
         """业务配置组。"""
-        group = QGroupBox("④ 业务参数")
+        group = QGroupBox("⑤ 业务参数")
         group.setStyleSheet(self._group_style())
         layout = QVBoxLayout(group)
         layout.setSpacing(8)
@@ -382,6 +421,10 @@ class ConfigPage(QWidget):
         self.approver_open_id_input.setText(
             config.get("FEISHU_APPROVAL_APPROVER_OPEN_ID", "")
         )
+        # AI 模型配置（v0.5.1 新增）
+        self.openai_base_input.setText(config.get("OPENAI_API_BASE", ""))
+        self.openai_key_input.setText(config.get("OPENAI_API_KEY", ""))
+        self.anthropic_key_input.setText(config.get("ANTHROPIC_API_KEY", ""))
         self.alert_days.setValue(int(config.get("INVENTORY_ALERT_DAYS", "14")))
         self.approval_threshold.setValue(
             float(config.get("PURCHASE_APPROVAL_THRESHOLD", "5000"))
@@ -403,6 +446,10 @@ class ConfigPage(QWidget):
             "FEISHU_WEBHOOK_URL": self.webhook_url_input.text().strip(),
             "FEISHU_CHAT_ID": self.chat_id_input.text().strip(),
             "FEISHU_APPROVAL_APPROVER_OPEN_ID": self.approver_open_id_input.text().strip(),
+            # AI 模型配置（v0.5.1 新增）
+            "OPENAI_API_BASE": self.openai_base_input.text().strip(),
+            "OPENAI_API_KEY": self.openai_key_input.text().strip(),
+            "ANTHROPIC_API_KEY": self.anthropic_key_input.text().strip(),
             "INVENTORY_ALERT_DAYS": str(self.alert_days.value()),
             "PURCHASE_APPROVAL_THRESHOLD": str(self.approval_threshold.value()),
             "DATA_RETENTION_DAYS": str(self.retention_days.value()),
@@ -412,11 +459,18 @@ class ConfigPage(QWidget):
             # 关键：重新加载 settings 单例，让其他模块立即读到最新配置
             from src.config import reload_settings
             reload_settings()
+            # 重置 ModelRouter 单例，让 AI Agent 用新配置的 base_url/模型（v0.5.1 新增）
+            try:
+                from src.ai.model_router import reset_model_router
+                reset_model_router()
+            except Exception:
+                pass
             QMessageBox.information(
                 self, "成功",
                 "配置已保存到 .env，立即生效。\n\n"
                 "现在可以去『健康检查』页验证配置是否正确，"
-                "或去『审批流管理』页扫描审批定义。"
+                "或去『审批流管理』页扫描审批定义，"
+                "或去『AI Agent』页运行选品分析。"
             )
         else:
             QMessageBox.critical(self, "失败", "保存配置失败，请查看日志。")
