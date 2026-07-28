@@ -78,58 +78,84 @@ def _extract_field_value(field: Any) -> Any:
     return str(field)
 
 
+def _query_sales_records(table_id: str, date_str: str) -> list[dict[str, Any]]:
+    """查询指定日期的销售日报记录。
+
+    抽成独立函数避免当天/前一天查询代码重复（v0.6.1 新增）。
+
+    Args:
+        table_id: 销售日报表 ID
+        date_str: 目标日期 YYYY-MM-DD
+
+    Returns:
+        销售日报记录列表，每条含平台/销售额/订单数等字段
+    """
+    filter_condition = {
+        "conjunction": "and",
+        "conditions": [
+            {
+                "field_name": "日期",
+                "operator": "is",
+                "value": [date_str],
+            }
+        ],
+    }
+    raw_records = bitable_client.query_records(
+        table_id, filter_condition=filter_condition
+    )
+    records: list[dict[str, Any]] = []
+    for r in raw_records:
+        fields = r.get("fields", {})
+        records.append({
+            "平台": _extract_field_value(fields.get("平台")),
+            "销售额": _extract_field_value(fields.get("销售额")),
+            "订单数": _extract_field_value(fields.get("订单数")),
+            "广告花费": _extract_field_value(fields.get("广告花费")),
+            "ACoS": _extract_field_value(fields.get("ACoS")),
+            "退货数": _extract_field_value(fields.get("退货数")),
+            "库存天数": _extract_field_value(fields.get("库存天数")),
+            "异常标记": _extract_field_value(fields.get("异常标记")),
+        })
+    return records
+
+
 @tool(args_schema=FetchDailyDataArgs)
 def fetch_daily_data(target_date: str = "") -> str:
     """拉取昨日销售数据和当前库存预警数据。
 
     从飞书多维表格查询：
     - 销售日报表中目标日期的所有记录
+    - 销售日报表中前一天的记录（v0.6.1 新增，用于销量环比异常检测）
     - 库存预警表中所有预警等级 != 正常 的记录
+    - 自动执行硬规则异常检测（销量跌幅 > 30% 标红，ACoS > 50% 标低效）
 
     Args:
         target_date: 目标日期 YYYY-MM-DD，留空表示昨天
 
     Returns:
-        JSON 字符串，含 sales_records 和 inventory_records 两个数组
+        JSON 字符串，含 sales_records/previous_sales_records/inventory_records/anomalies
     """
     date_str = _normalize_date(target_date)
-    logger.info(f"开始拉取 {date_str} 的业务数据")
+    # 前一天日期（v0.6.1 新增：用于销量环比异常检测）
+    prev_date_str = (
+        datetime.fromisoformat(date_str) - timedelta(days=1)
+    ).strftime("%Y-%m-%d")
+    logger.info(f"开始拉取 {date_str} 的业务数据（前一天 {prev_date_str} 用于环比）")
 
     sales_records: list[dict[str, Any]] = []
+    previous_sales_records: list[dict[str, Any]] = []
     inventory_records: list[dict[str, Any]] = []
 
     try:
-        # 1. 拉销售日报数据
+        # 1. 拉销售日报数据（当天 + 前一天，用于环比异常检测）
         sales_table_id = settings.feishu_table_id_daily_report
         if sales_table_id:
-            # 飞书筛选条件：日期字段 = 目标日期
-            # 注意：飞书日期字段筛选使用 AND 条件包裹 Conjunction
-            filter_condition = {
-                "conjunction": "and",
-                "conditions": [
-                    {
-                        "field_name": "日期",
-                        "operator": "is",
-                        "value": [date_str],
-                    }
-                ],
-            }
-            raw_records = bitable_client.query_records(
-                sales_table_id, filter_condition=filter_condition
-            )
-            for r in raw_records:
-                fields = r.get("fields", {})
-                sales_records.append({
-                    "平台": _extract_field_value(fields.get("平台")),
-                    "销售额": _extract_field_value(fields.get("销售额")),
-                    "订单数": _extract_field_value(fields.get("订单数")),
-                    "广告花费": _extract_field_value(fields.get("广告花费")),
-                    "ACoS": _extract_field_value(fields.get("ACoS")),
-                    "退货数": _extract_field_value(fields.get("退货数")),
-                    "库存天数": _extract_field_value(fields.get("库存天数")),
-                    "异常标记": _extract_field_value(fields.get("异常标记")),
-                })
+            # 当天数据
+            sales_records = _query_sales_records(sales_table_id, date_str)
             logger.info(f"拉取销售日报 {date_str}: {len(sales_records)} 条")
+            # 前一天数据（v0.6.1 新增：用于销量跌幅检测）
+            previous_sales_records = _query_sales_records(sales_table_id, prev_date_str)
+            logger.info(f"拉取销售日报 {prev_date_str}: {len(previous_sales_records)} 条")
         else:
             logger.warning("未配置销售日报表 ID")
 
@@ -173,16 +199,25 @@ def fetch_daily_data(target_date: str = "") -> str:
             ensure_ascii=False,
         )
 
+    # 3. 硬规则异常检测（v0.6.1 新增：销量跌幅 > 30% 自动标红）
+    # 不依赖 LLM，用确定性规则检测异常，结果同时供 LLM 分析和预警卡片使用
+    from src.ai.agents.anomaly_detector import detect_anomalies
+
+    anomalies = detect_anomalies(sales_records, previous_sales_records)
+
     result = {
         "date": date_str,
+        "previous_date": prev_date_str,
         "sales_records": sales_records,
+        "previous_sales_records": previous_sales_records,
         "inventory_records": inventory_records,
         "sales_count": len(sales_records),
         "inventory_alert_count": len(inventory_records),
+        "anomalies": anomalies,
     }
     logger.info(
         f"fetch_daily_data 完成: 销售 {len(sales_records)} 条，"
-        f"库存预警 {len(inventory_records)} 条"
+        f"库存预警 {len(inventory_records)} 条，异常 {len(anomalies)} 条"
     )
     return json.dumps(result, ensure_ascii=False)
 
@@ -215,23 +250,49 @@ def analyze_daily_data(data_json: str) -> str:
     try:
         data = json.loads(data_json)
         sales_records = data.get("sales_records", [])
+        previous_sales_records = data.get("previous_sales_records", [])
         inventory_records = data.get("inventory_records", [])
+        anomalies = data.get("anomalies", [])
         date_str = data.get("date", "未知日期")
 
         # 格式化数据供 LLM 阅读
         sales_text = json.dumps(sales_records, ensure_ascii=False, indent=2) or "无销售数据"
+        previous_sales_text = (
+            json.dumps(previous_sales_records, ensure_ascii=False, indent=2)
+            or "无前一天数据"
+        )
         inventory_text = json.dumps(inventory_records, ensure_ascii=False, indent=2) or "无库存预警"
+        # v0.6.1 新增：把硬规则检测到的异常信息也喂给 LLM，让 LLM 重点解释
+        anomalies_text = (
+            json.dumps(anomalies, ensure_ascii=False, indent=2)
+            if anomalies
+            else "无硬规则检测到的异常"
+        )
 
         # 调用 LLM 分析
         pm = get_prompt_manager()
         router = get_model_router()
         llm = router.get_llm(task_type="standard")  # 数据分析用 standard 模型
 
+        # v0.6.1 新增：把前一天数据和硬规则异常检测结果一起传给 LLM
+        # 让 LLM 能基于确定的异常事实给出更准确的解释和建议
         prompt = pm.get_prompt("insight_analysis")
         messages = prompt.format_messages(
             sales_data=sales_text,
             inventory_data=inventory_text,
         )
+        # 在最后追加前一天数据和异常检测结果作为补充上下文
+        from langchain_core.messages import HumanMessage
+
+        messages.append(HumanMessage(
+            content=(
+                f"## 补充上下文（v0.6.1 新增）\n\n"
+                f"### 前一天销售数据（用于环比）\n{previous_sales_text}\n\n"
+                f"### 硬规则异常检测结果（确定性事实，请重点解释这些异常）\n{anomalies_text}\n\n"
+                f"请在 sales_insight.anomaly 字段中明确说明异常情况，"
+                f"若无异常则填空字符串。"
+            )
+        ))
 
         logger.info(f"调用 LLM 分析日报数据，日期={date_str}")
         response = llm.invoke(messages)
@@ -257,9 +318,14 @@ def analyze_daily_data(data_json: str) -> str:
         result = {
             "date": date_str,
             "analysis": analysis,
+            "anomalies": anomalies,  # v0.6.1 新增：透传硬规则异常给 save_insight_report
             "raw_llm_output": content_text,
         }
-        logger.info("analyze_daily_data 完成")
+        logger.info(
+            f"analyze_daily_data 完成，"
+            f"LLM 分析 {len(sales_records)} 条销售数据，"
+            f"硬规则异常 {len(anomalies)} 条"
+        )
         return json.dumps(result, ensure_ascii=False)
 
     except Exception as e:
@@ -319,7 +385,9 @@ def save_insight_report(analysis_json: str, push_to_feishu: bool = True) -> str:
 
     动作：
     1. 把 AI 洞察文本写入销售日报表的"AI洞察"字段（每条记录都更新）
-    2. 推送一张日报卡片到飞书群（含三维度概览 + 异常标记 + 行动建议）
+    2. v0.6.1 新增：检测到异常时，把"异常标记"字段标红（销量下跌/ACoS过高）
+    3. 推送一张日报卡片到飞书群（含三维度概览 + 异常标记 + 行动建议）
+    4. v0.6.1 新增：如果硬规则检测到异常，额外推送一张红色异常预警卡片
 
     Args:
         analysis_json: analyze_daily_data 返回的 JSON
@@ -331,10 +399,12 @@ def save_insight_report(analysis_json: str, push_to_feishu: bool = True) -> str:
     try:
         data = json.loads(analysis_json)
         analysis = data.get("analysis", {})
+        anomalies = data.get("anomalies", [])  # v0.6.1 新增
         date_str = data.get("date", "")
 
-        # 1. 写回销售日报表 AI 洞察字段
+        # 1. 写回销售日报表 AI 洞察字段 + 异常标记字段
         updated_count = 0
+        marked_anomaly_count = 0
         sales_table_id = settings.feishu_table_id_daily_report
         if sales_table_id:
             # 查询目标日期的所有记录，逐条更新 AI 洞察字段
@@ -355,19 +425,40 @@ def save_insight_report(analysis_json: str, push_to_feishu: bool = True) -> str:
             # 从 analysis 提取要写入的洞察文本
             table_insight = _build_table_insight(analysis)
 
+            # v0.6.1 新增：构建 平台 -> 异常类型 映射，用于标红表格"异常标记"字段
+            anomaly_map: dict[str, str] = {}
+            for a in anomalies:
+                platform = a.get("platform", "")
+                anomaly_type = a.get("type", "")
+                if platform and anomaly_type:
+                    anomaly_map[platform] = anomaly_type
+
             for r in records:
                 record_id = r.get("record_id", "")
                 if not record_id:
                     continue
                 try:
+                    # 基础更新字段：AI 洞察
+                    update_fields: dict[str, Any] = {"AI洞察": table_insight}
+
+                    # v0.6.1 新增：如果该平台命中异常，把"异常标记"字段标红
+                    fields = r.get("fields", {})
+                    platform = _extract_field_value(fields.get("平台"))
+                    if platform in anomaly_map:
+                        update_fields["异常标记"] = anomaly_map[platform]
+                        marked_anomaly_count += 1
+
                     bitable_client.update_record(
-                        sales_table_id, record_id, {"AI洞察": table_insight}
+                        sales_table_id, record_id, update_fields
                     )
                     updated_count += 1
                 except Exception as e:
                     logger.warning(f"更新 AI 洞察失败 record_id={record_id}: {e}")
 
-            logger.info(f"已更新 {updated_count} 条销售日报的 AI 洞察字段")
+            logger.info(
+                f"已更新 {updated_count} 条销售日报的 AI 洞察字段，"
+                f"其中 {marked_anomaly_count} 条标红异常标记"
+            )
         else:
             logger.warning("未配置销售日报表 ID，跳过 AI 洞察写回")
 
@@ -386,11 +477,37 @@ def save_insight_report(analysis_json: str, push_to_feishu: bool = True) -> str:
             except Exception as e:
                 logger.error(f"推送日报卡片失败: {e}")
 
+        # v0.6.1 新增：如果有异常，额外推送一张红色异常预警卡片
+        anomaly_pushed = False
+        if push_to_feishu and anomalies:
+            try:
+                from src.feishu.card_templates import build_anomaly_alert_card
+
+                alert_card = build_anomaly_alert_card(
+                    date_str=date_str,
+                    anomalies=anomalies,
+                    table_url=build_table_url(sales_table_id),
+                )
+                application_bot.send_card(alert_card)
+                anomaly_pushed = True
+                logger.warning(
+                    f"检测到 {len(anomalies)} 条异常，已推送红色异常预警卡片"
+                )
+            except Exception as e:
+                logger.error(f"推送异常预警卡片失败: {e}")
+
         result = {
             "updated_records": updated_count,
+            "marked_anomaly_records": marked_anomaly_count,
             "pushed_to_feishu": pushed,
-            "message": f"已更新 {updated_count} 条日报记录，"
-                       f"飞书群推送{'成功' if pushed else '失败'}",
+            "anomaly_alert_pushed": anomaly_pushed,
+            "anomaly_count": len(anomalies),
+            "message": (
+                f"已更新 {updated_count} 条日报记录"
+                f"（其中 {marked_anomaly_count} 条标红异常），"
+                f"日报卡片推送{'成功' if pushed else '失败'}，"
+                f"异常预警卡片{'已推送' if anomaly_pushed else '未推送（无异常或失败）'}"
+            ),
         }
         logger.info(f"save_insight_report 完成: {result}")
         return json.dumps(result, ensure_ascii=False)

@@ -162,6 +162,7 @@ class TestFetchDailyData:
         ) as mock_settings:
             mock_settings.feishu_table_id_daily_report = "tblSales123"
             mock_settings.feishu_table_id_inventory = "tblInv456"
+            # v0.6.1：query_records 调用 3 次（当天/前一天/库存）
             mock_bitable.query_records.return_value = []
 
             result = fetch_daily_data.invoke({"target_date": ""})
@@ -214,10 +215,11 @@ class TestFetchDailyData:
             mock_settings.feishu_table_id_daily_report = "tblSales123"
             mock_settings.feishu_table_id_inventory = "tblInv456"
 
-            # 第一次调用返回销售数据，第二次返回库存数据
+            # v0.6.1 调用顺序：当天销售 → 前一天销售 → 库存预警
             mock_bitable.query_records.side_effect = [
-                mock_sales_records,
-                [],  # 库存预警返回空
+                mock_sales_records,  # 当天销售
+                [],                  # 前一天销售（空）
+                [],                  # 库存预警（空）
             ]
 
             result = fetch_daily_data.invoke({"target_date": "2026-07-27"})
@@ -225,6 +227,9 @@ class TestFetchDailyData:
         parsed = json.loads(result)
         assert parsed["sales_count"] == 1
         assert parsed["inventory_alert_count"] == 0
+        # v0.6.1 新增字段
+        assert "previous_sales_records" in parsed
+        assert "anomalies" in parsed
         # 验证字段提取
         sales = parsed["sales_records"][0]
         assert sales["平台"] == "亚马逊"
@@ -258,10 +263,11 @@ class TestFetchDailyData:
             mock_settings.feishu_table_id_daily_report = "tblSales123"
             mock_settings.feishu_table_id_inventory = "tblInv456"
 
-            # 第一次调用返回销售数据为空，第二次返回库存数据
+            # v0.6.1 调用顺序：当天销售 → 前一天销售 → 库存预警
             mock_bitable.query_records.side_effect = [
-                [],
-                mock_inventory_records,
+                [],                    # 当天销售（空）
+                [],                    # 前一天销售（空）
+                mock_inventory_records,  # 库存预警
             ]
 
             result = fetch_daily_data.invoke({"target_date": "2026-07-27"})

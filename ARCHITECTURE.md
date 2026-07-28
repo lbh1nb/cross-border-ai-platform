@@ -692,6 +692,52 @@ flowchart TB
 - 行动建议：按优先级排序的前 3 条建议
 - 跳转按钮：点击跳转飞书销售日报表
 
+#### 2.8.1 硬规则异常检测（v0.6.1 新增）
+
+**设计动机**：LLM 可能漏判或夸大异常，硬规则提供可靠的兜底。检测结果同时供 LLM 分析（作为补充上下文）和预警卡片使用，做到「LLM 失败时也能告警」。
+
+```mermaid
+flowchart LR
+    A[fetch_daily_data] --> B[拉当天+前一天数据]
+    B --> C[anomaly_detector<br/>硬规则检测]
+    C --> D{有异常?}
+    D -->|是| E[标红表格异常标记字段]
+    D -->|是| F[推送红色异常预警卡片]
+    D -->|否| G[正常推送日报卡片]
+    C -->|补充上下文| H[analyze_daily_data<br/>LLM 重点解释异常]
+
+    style C fill:#5a2d2d,color:#fff
+    style E fill:#5a3d2d,color:#fff
+    style F fill:#5a3d2d,color:#fff
+    style H fill:#2d4a5a,color:#fff
+```
+
+**异常检测模块**（`src/ai/agents/anomaly_detector.py`）：
+
+| 检测维度 | 阈值 | 严重程度 | 触发动作 |
+|----------|------|----------|----------|
+| 销量跌幅 | 环比 > 30% | warning（30-50%）/ critical（≥50%） | 标红 + 推送红色卡片 |
+| ACoS 过高 | > 50% | warning | 标红 + 推送红色卡片 |
+| 库存紧急 | 可售天数 ≤ 7 | critical | 推送红色卡片 |
+
+**异常预警卡片**（`src/feishu/card_templates.py::build_anomaly_alert_card`）：
+- 红色模板（与日报卡片蓝色区分，强调严重性）
+- critical 排在 warning 之前（按严重程度排序）
+- 统计字段：严重异常数 + 警告异常数 + 总计
+- 建议动作：3 条标准化处置建议
+- 红色危险按钮：点击跳转飞书表格查看详情
+
+**联调脚本**（`scripts/insight_agent_smoke_test.py`）：
+- 生成 7 天模拟数据（21 条记录，含 2 条埋点异常）
+- 验证异常检测、LLM 分析结构、卡片生成、表格洞察文本全流程
+- 不消耗 API 额度（用 Mock LLM），可在 CI 中运行
+
+**A/B 对比脚本**（`scripts/ab_compare_insight.py`）：
+- 同一份数据分别调用 GPT-4o-mini 和 Claude，5 维度评分对比
+- 评分维度：结构完整性 / 异常识别 / 建议可操作性 / 表达清晰度 / 业务价值
+- 支持 Mock 模式（默认）和真实 API 模式（`--real` 参数）
+- 生成 `docs/ab_compare_report.md` 对比报告
+
 ### 2.9 可观测性模块（src/observability/，v0.5.0 新增）
 
 **LLM 调用监控闭环**：自动记录每次 LLM 调用的耗时、Token、成本，失败率超阈值时飞书告警。

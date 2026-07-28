@@ -27,6 +27,7 @@
 | **LLM 调用可观测性** | ✅ 已完成 | Callback 自动记录耗时/Token/成本到 SQLite，失败率 >10% 飞书告警（v0.5.0） |
 | **国内大模型支持** | ✅ 已完成 | 一套代码兼容 DeepSeek/通义千问/智谱 GLM/Kimi，无需代理国内直连（v0.5.1） |
 | **数据洞察 Agent** | ✅ 已完成 | 每日 18:00 自动拉数据→LLM 三维度分析→写回表格+推送日报卡片（v0.6.0） |
+| **异常检测增强** | ✅ 已完成 | 销量跌幅 > 30% 自动标红+推送红色预警卡片，硬规则兜底 LLM 漏判（v0.6.1） |
 
 ### 🖥️ 桌面 GUI 预览
 
@@ -1004,6 +1005,15 @@ curl -X POST http://127.0.0.1:8000/callback \
 
 ## 📝 版本历史
 
+- **v0.6.1**：数据洞察 Agent 联调 + 异常检测增强
+  - 硬规则异常检测模块（`anomaly_detector.py`）：销量跌幅 > 30%、ACoS > 50%、库存 ≤ 7 天自动检测
+  - `fetch_daily_data` 增加前一天数据拉取，支持环比跌幅检测
+  - `analyze_daily_data` 把硬规则异常检测结果作为补充上下文传给 LLM，提升分析准确度
+  - `save_insight_report` 检测到异常时自动标红表格"异常标记"字段 + 推送红色异常预警卡片
+  - 新增 `build_anomaly_alert_card` 红色异常预警卡片模板（critical/warning 分级 + 建议动作）
+  - 新增联调脚本 `scripts/insight_agent_smoke_test.py`（7 天模拟数据验证日报质量）
+  - 新增 A/B 对比脚本 `scripts/ab_compare_insight.py`（GPT-4o-mini vs Claude 5 维度评分）
+  - 新增 36 个单元测试（异常检测器 24 + 异常卡片 12），AI 模块测试总计 92 个全部通过
 - **v0.6.0**：数据洞察 Agent 上线
   - 数据洞察 Agent（ReAct 模式，3 工具：拉数据→LLM 分析→写回+推送）
   - 每日 18:00 自动触发日报生成（接入 APScheduler 定时任务）

@@ -1015,3 +1015,123 @@ def build_ai_insight_card(
         },
         "elements": elements,
     }
+
+
+def build_anomaly_alert_card(
+    date_str: str,
+    anomalies: list[dict[str, Any]],
+    table_url: str = "",
+) -> dict[str, Any]:
+    """构建异常预警卡片（v0.6.1 新增）。
+
+    当硬规则检测到销量跌幅 > 30% 或 ACoS > 50% 时，自动推送此卡片。
+    与数据洞察日报卡片（蓝色）区分，本卡片用红色模板强调异常严重性。
+
+    Args:
+        date_str: 异常发生日期 YYYY-MM-DD
+        anomalies: 异常列表，每条含 type/platform/detail/severity/metric
+        table_url: 跳转表格的 URL
+
+    Returns:
+        飞书互动卡片 dict
+    """
+    # 按严重程度分组：critical 在前，warning 在后
+    sorted_anomalies = sorted(
+        anomalies,
+        key=lambda a: 0 if a.get("severity") == "critical" else 1,
+    )
+
+    # 异常条目文本
+    anomaly_lines: list[str] = []
+    for idx, a in enumerate(sorted_anomalies, start=1):
+        severity_icon = "🔴" if a.get("severity") == "critical" else "🟡"
+        anomaly_lines.append(
+            f"{severity_icon} **异常 {idx}**：{a.get('detail', '未知异常')}"
+        )
+    anomalies_text = "\n".join(anomaly_lines) if anomaly_lines else "无异常详情"
+
+    # 统计
+    critical_count = sum(1 for a in anomalies if a.get("severity") == "critical")
+    warning_count = len(anomalies) - critical_count
+
+    elements: list[dict[str, Any]] = [
+        {
+            "tag": "div",
+            "fields": [
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**📅 日期**\n{date_str}",
+                    },
+                },
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**🔴 严重异常**\n{critical_count} 条",
+                    },
+                },
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**🟡 警告异常**\n{warning_count} 条",
+                    },
+                },
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**📊 总计**\n{len(anomalies)} 条",
+                    },
+                },
+            ],
+        },
+        {
+            "tag": "hr",
+        },
+        {
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": f"**⚠️ 异常详情**\n{anomalies_text}",
+            },
+        },
+        {
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": (
+                    "**📌 建议动作**\n"
+                    "1. 立即排查异常平台的销售和广告数据\n"
+                    "2. 销量下跌：检查关键词排名、广告位、竞品动态\n"
+                    "3. ACoS 过高：暂停低转化关键词，优化广告结构"
+                ),
+            },
+        },
+    ]
+
+    # "查看销售日报"按钮
+    if table_url:
+        elements.append({
+            "tag": "action",
+            "actions": [{
+                "tag": "button",
+                "text": {"tag": "plain_text", "content": "🚨 查看异常详情"},
+                "url": table_url,
+                "type": "danger",
+            }],
+        })
+
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {
+                "tag": "plain_text",
+                "content": f"🚨 异常预警 · {date_str} · {len(anomalies)} 条异常",
+            },
+            "template": "red",  # 红色模板强调严重性
+        },
+        "elements": elements,
+    }
