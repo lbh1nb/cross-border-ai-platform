@@ -546,6 +546,17 @@ flowchart TB
 - 基于 LangChain ChatPromptTemplate，支持变量渲染
 - 模板硬编码在模块中（v0.6.0 计划支持从文件加载）
 
+**MemoryStore 说明**：
+- 原计划单独建 `memory_store.py` 模块管理 Agent 上下文记忆
+- 实际采用 LangGraph 内置的 `messages` 状态管理（create_agent 自动维护消息历史）
+- 功能等价：Agent 每轮工具调用的输入输出都自动保存在 graph state 的 messages 列表中
+- 因此不单独建 MemoryStore 模块，避免过度设计
+
+**Agent 工具调用限制**（v0.5.2 新增）：
+- `recursion_limit=10`：LangGraph 图执行总步数上限
+- 每轮工具调用约 2 步（agent 节点 + tools 节点），10 步 = 最多 5 轮工具调用
+- 防止 Agent 死循环或无限调用工具消耗 token
+
 **选品 Agent 工作流**（`src/ai/agents/selection_agent.py`）：
 
 ```mermaid

@@ -729,3 +729,125 @@ def build_approval_done_card(
         },
         "elements": elements,
     }
+
+
+def build_ai_analysis_card(
+    category: str,
+    market_capacity: str,
+    competition_level: str,
+    profit_potential: str,
+    top_picks: list[dict[str, Any]],
+    summary: str,
+    table_url: str = "",
+) -> dict[str, Any]:
+    """构建 AI 选品分析报告卡片（v0.5.2 新增）。
+
+    AI Agent 分析完成后，向飞书群推送此卡片，展示：
+    - 品类市场概况（容量/竞争/利润）
+    - Top 3 推荐商品
+    - AI 总结
+    - "查看选品池"按钮跳转多维表格
+
+    Args:
+        category: 品类名（如 "家居收纳"）
+        market_capacity: 市场容量（高/中/低）
+        competition_level: 竞争强度（激烈/中等/蓝海）
+        profit_potential: 利润空间（高/中/低）
+        top_picks: 推荐商品列表，每项含 asin/name/reason/estimated_margin
+        summary: AI 总结文本
+        table_url: 选品池表链接
+
+    Returns:
+        飞书卡片 JSON 对象
+    """
+    # 三个维度指标配色（高=绿/中=蓝/低=灰，激烈=红/蓝海=绿）
+    capacity_color = {"高": "green", "中": "blue", "低": "grey"}.get(market_capacity, "grey")
+    competition_color = {"激烈": "red", "中等": "orange", "蓝海": "green"}.get(competition_level, "grey")
+    profit_color = {"高": "green", "中": "blue", "低": "grey"}.get(profit_potential, "grey")
+
+    elements: list[dict[str, Any]] = [
+        # 三维度指标行
+        {
+            "tag": "div",
+            "fields": [
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**市场容量**\n<font color='{capacity_color}'>{market_capacity}</font>",
+                    },
+                },
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**竞争强度**\n<font color='{competition_color}'>{competition_level}</font>",
+                    },
+                },
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**利润空间**\n<font color='{profit_color}'>{profit_potential}</font>",
+                    },
+                },
+            ],
+        },
+        {"tag": "hr"},
+    ]
+
+    # Top 推荐商品列表（最多展示 3 个）
+    if top_picks:
+        picks_lines = []
+        for i, pick in enumerate(top_picks[:3], start=1):
+            name = pick.get("name", "未知商品")
+            asin = pick.get("asin", "")
+            reason = pick.get("reason", "")
+            margin = pick.get("estimated_margin", "")
+            picks_lines.append(
+                f"**{i}. {name}**\n"
+                f"ASIN: {asin} | 利润: {margin}\n"
+                f"理由: {reason}"
+            )
+        elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": "**🏆 Top 推荐**\n\n" + "\n\n".join(picks_lines),
+            },
+        })
+        elements.append({"tag": "hr"})
+
+    # AI 总结
+    if summary:
+        elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": f"**📋 AI 总结**\n{summary}",
+            },
+        })
+
+    # "查看选品池"按钮
+    if table_url:
+        elements.append({
+            "tag": "action",
+            "actions": [{
+                "tag": "button",
+                "text": {"tag": "plain_text", "content": "📊 查看选品池"},
+                "url": table_url,
+                "type": "primary",
+            }],
+        })
+
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {
+                "tag": "plain_text",
+                "content": f"🤖 AI 选品报告 · {category}",
+            },
+            "template": "blue",
+        },
+        "elements": elements,
+    }

@@ -114,9 +114,14 @@ def run_selection_agent(category: str) -> dict[str, Any]:
                     f"分析后保存结果并推送到飞书群。"
         )
 
-        # 调用 Agent
+        # 调用 Agent，限制最多 5 轮工具调用（recursion_limit=10）
+        # LangGraph 每轮工具调用约 2 步（agent 节点 + tools 节点），5 轮 = 10 步
+        # 防止 Agent 死循环或无限调用工具
         logger.info("Agent 开始执行...")
-        result = agent.invoke({"messages": [user_message]})
+        result = agent.invoke(
+            {"messages": [user_message]},
+            config={"recursion_limit": 10},
+        )
 
         # 提取最终输出
         messages = result.get("messages", [])

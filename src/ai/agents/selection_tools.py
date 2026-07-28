@@ -21,11 +21,12 @@ from pydantic import BaseModel, Field
 
 from src.ai.model_router import get_model_router
 from src.ai.prompt_manager import get_prompt_manager
+from src.config import settings
 from src.feishu.application_bot import application_bot
 from src.feishu.bitable import bitable_client
+from src.feishu.card_templates import build_ai_analysis_card, build_table_url
 from src.observability.logger import get_logger
 from src.pipeline.collectors.amazon_mock import MockAmazonCollector
-from src.config import settings
 
 logger = get_logger()
 
@@ -186,14 +187,22 @@ def save_report(analysis_json: str, push_to_feishu: bool = True) -> str:
         else:
             logger.warning("未配置选品池表 ID，跳过多维表格写入")
 
-        # 2. 推送报告到飞书群
+        # 2. 推送 AI 分析报告卡片到飞书群（v0.5.2 改用交互卡片）
         pushed = False
         if push_to_feishu:
             try:
-                report_text = _format_report_text(category, analysis)
-                application_bot.send_text(report_text)
+                card = build_ai_analysis_card(
+                    category=category,
+                    market_capacity=analysis.get("market_capacity", "未知"),
+                    competition_level=analysis.get("competition_level", "未知"),
+                    profit_potential=analysis.get("profit_potential", "未知"),
+                    top_picks=top_picks,
+                    summary=summary,
+                    table_url=build_table_url(settings.feishu_table_id_selection),
+                )
+                application_bot.send_card(card)
                 pushed = True
-                logger.info("报告已推送到飞书群")
+                logger.info("AI 分析报告卡片已推送到飞书群")
             except Exception as e:
                 logger.error(f"推送飞书群失败: {e}")
 
@@ -209,25 +218,6 @@ def save_report(analysis_json: str, push_to_feishu: bool = True) -> str:
     except Exception as e:
         logger.error(f"save_report 失败: {e}", exc_info=True)
         return json.dumps({"error": str(e)}, ensure_ascii=False)
-
-
-def _format_report_text(category: str, analysis: dict[str, Any]) -> str:
-    """格式化分析结果为飞书群推送文本。"""
-    top_picks = analysis.get("top_picks", [])
-    picks_text = "\n".join(
-        f"  {i+1}. {p.get('name', '')} (ASIN: {p.get('asin', '')})\n"
-        f"     理由：{p.get('reason', '')}"
-        for i, p in enumerate(top_picks[:3])
-    )
-
-    return (
-        f"📊 [选品报告] {category} 类目分析\n\n"
-        f"市场容量：{analysis.get('market_capacity', '-')}\n"
-        f"竞争强度：{analysis.get('competition_level', '-')}\n"
-        f"利润空间：{analysis.get('profit_potential', '-')}\n\n"
-        f"Top 推荐：\n{picks_text}\n\n"
-        f"总结：{analysis.get('summary', '-')}"
-    )
 
 
 # 导出所有工具列表（供 Agent 注册使用）
