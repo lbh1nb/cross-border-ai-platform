@@ -1135,3 +1135,134 @@ def build_anomaly_alert_card(
         },
         "elements": elements,
     }
+
+
+# ===== 双 Agent 联动进度卡片（v0.7.0 新增） =====
+
+
+# 联动阶段 → 卡片标题颜色映射
+_ORCHESTRATION_STAGE_COLORS = {
+    "selection_started": "blue",       # 选品 Agent 启动
+    "selection_done": "green",         # 选品完成
+    "listing_started": "blue",         # Listing Agent 启动
+    "listing_completed": "green",      # Listing 优化完成
+    "review_triggered": "orange",      # 洞察触发复盘
+    "no_review_needed": "grey",        # 洞察未触发复盘
+    "failed": "red",                   # 联动失败
+}
+
+
+def build_orchestration_card(
+    title: str,
+    stage: str,
+    stats: dict[str, str] | None = None,
+    samples: list[dict[str, Any]] | None = None,
+    table_url: str = "",
+) -> dict[str, Any]:
+    """构建双 Agent 联动进度卡片（v0.7.0 新增）。
+
+    用于在联动各阶段推送进度通知到飞书群，让业务用户实时感知联动状态。
+
+    Args:
+        title: 卡片标题（含 emoji）
+        stage: 联动阶段标识，用于决定卡片颜色：
+            - selection_started: 选品 Agent 启动（蓝色）
+            - selection_done: 选品完成（绿色）
+            - listing_started: Listing Agent 启动（蓝色）
+            - listing_completed: Listing 优化完成（绿色）
+            - review_triggered: 洞察触发复盘（橙色）
+            - no_review_needed: 洞察未触发复盘（灰色）
+            - failed: 联动失败（红色）
+        stats: 统计字段字典（如 {"优化成功": "5 条", "优化失败": "0 条"}）
+        samples: 样本列表（最多展示 3 条，每项含 asin/name/optimized_title 等）
+        table_url: 跳转飞书表格的 URL
+
+    Returns:
+        飞书卡片 JSON 字典
+    """
+    template_color = _ORCHESTRATION_STAGE_COLORS.get(stage, "blue")
+
+    elements: list[dict[str, Any]] = []
+
+    # 统计字段区
+    if stats:
+        fields = []
+        items = list(stats.items())
+        # 两列布局，每行 2 个字段
+        for i in range(0, len(items), 2):
+            pair = items[i : i + 2]
+            for key, value in pair:
+                fields.append({
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**{key}**\n{value}",
+                    },
+                })
+            # 补齐奇数个字段的最后一行
+            if len(pair) == 1:
+                fields.append({
+                    "is_short": True,
+                    "text": {"tag": "lark_md", "content": ""},
+                })
+        if fields:
+            elements.append({"tag": "div", "fields": fields})
+            elements.append({"tag": "hr"})
+
+    # 样本展示区（最多 3 条）
+    if samples:
+        sample_lines: list[str] = []
+        for idx, s in enumerate(samples[:3], start=1):
+            asin = s.get("asin", "")
+            name = s.get("name", "")[:30]
+            optimized = s.get("optimized_title", "")[:60]
+            source_tag = "LLM" if s.get("source") == "llm" else "Mock"
+            sample_lines.append(
+                f"**{idx}. {name}** ({asin})\n"
+                f"优化标题：{optimized}\n"
+                f"模式：{source_tag}"
+            )
+        elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": f"**📋 优化样本（前 {len(samples[:3])} 条）**\n\n"
+                           + "\n\n".join(sample_lines),
+            },
+        })
+        elements.append({"tag": "hr"})
+
+    # 建议动作
+    elements.append({
+        "tag": "div",
+        "text": {
+            "tag": "lark_md",
+            "content": (
+                "**📌 后续动作**\n"
+                "1. 在飞书 Listing 库查看完整优化结果\n"
+                "2. 人工复核优化标题和五点描述\n"
+                "3. 确认无误后状态改为「已上线」"
+            ),
+        },
+    })
+
+    # 跳转按钮
+    if table_url:
+        elements.append({
+            "tag": "action",
+            "actions": [{
+                "tag": "button",
+                "text": {"tag": "plain_text", "content": "📂 查看 Listing 库"},
+                "url": table_url,
+                "type": "primary" if stage != "failed" else "danger",
+            }],
+        })
+
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {"tag": "plain_text", "content": title},
+            "template": template_color,
+        },
+        "elements": elements,
+    }

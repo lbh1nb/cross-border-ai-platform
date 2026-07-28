@@ -19,6 +19,70 @@ from src.observability.logger import get_logger
 logger = get_logger()
 
 
+def _extract_amount(value: object) -> float:
+    """从飞书表格字段值中提取金额（float）。
+
+    飞书多维表格的"采购金额"字段可能以多种形式返回：
+    - 数字类型：直接是 float / int
+    - 文本类型：字符串数字（如 "8500.0"）
+    - 多行文本类型：列表字典格式（如 [{"text": "8500"}] 或 [{"name": "8500.5"}]）
+    - 空值：None / 空字符串 / 空列表
+    - 无效值：无法解析的字符串
+
+    Args:
+        value: 飞书表格字段原始值
+
+    Returns:
+        提取出的金额（float），空值或无效值返回 0.0
+
+    Examples:
+        >>> _extract_amount(8500.0)
+        8500.0
+        >>> _extract_amount("8500")
+        8500.0
+        >>> _extract_amount([{"text": "8500"}])
+        8500.0
+        >>> _extract_amount(None)
+        0.0
+        >>> _extract_amount("invalid")
+        0.0
+    """
+    if value is None:
+        return 0.0
+
+    # 数字类型直接返回
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    # 字符串类型尝试解析
+    if isinstance(value, str):
+        if not value.strip():
+            return 0.0
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return 0.0
+
+    # 列表类型（飞书多行文本格式：[{"text": "8500"}] 或 [{"name": "8500.5"}]）
+    if isinstance(value, list):
+        if not value:
+            return 0.0
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            # 优先取 text 字段，其次 name 字段
+            for key in ("text", "name", "value"):
+                if key in item:
+                    try:
+                        return float(item[key])
+                    except (ValueError, TypeError):
+                        continue
+        return 0.0
+
+    # 其他类型返回 0.0
+    return 0.0
+
+
 def trigger_approval_for_records(
     event_type: str,
     records: list[dict],

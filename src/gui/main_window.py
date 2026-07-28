@@ -43,7 +43,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("跨境电商 AI 运营中台 v0.6.1")
+        self.setWindowTitle("跨境电商 AI 运营中台 v0.7.0")
         self.resize(1280, 800)
         self._init_ui()
 

@@ -308,3 +308,18 @@ def create_daily_report_sync_service() -> SyncService:
         table_id=settings.feishu_table_id_daily_report,
         table_name="销售日报",
     )
+
+
+def create_listing_sync_service() -> SyncService:
+    """创建 Listing 库同步服务（v0.7.0 新增）。
+
+    主键为 ASIN，同一商品只有一条优化记录。
+    用于双 Agent 联动场景①：选品 Agent 输出 → 写入 Listing 库形成优化队列。
+
+    注意：主键在调用 sync_records() 时通过 primary_keys 参数传入。
+    """
+    from src.config import settings
+    return SyncService(
+        table_id=settings.feishu_table_id_listing,
+        table_name="Listing库",
+    )

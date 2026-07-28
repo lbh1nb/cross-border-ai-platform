@@ -28,6 +28,7 @@
 | **国内大模型支持** | ✅ 已完成 | 一套代码兼容 DeepSeek/通义千问/智谱 GLM/Kimi，无需代理国内直连（v0.5.1） |
 | **数据洞察 Agent** | ✅ 已完成 | 每日 18:00 自动拉数据→LLM 三维度分析→写回表格+推送日报卡片（v0.6.0） |
 | **异常检测增强** | ✅ 已完成 | 销量跌幅 > 30% 自动标红+推送红色预警卡片，硬规则兜底 LLM 漏判（v0.6.1） |
+| **双 Agent 联动** | ✅ 已完成 | 状态机编排引擎，选品→Listing、洞察→选品复盘两个场景一键联动（v0.7.0） |
 
 ### 🖥️ 桌面 GUI 预览
 
@@ -92,6 +93,7 @@ flowchart TB
         B3[数据清理<br/>每 3 天 2:00]
         B4[数据洞察 Agent<br/>每日 18:00]
         B5[审批流兜底扫描<br/>每小时整点]
+        B6[双 Agent 联动<br/>GUI 手动触发]
     end
 
     subgraph 事件驱动[事件驱动审批触发]
@@ -105,6 +107,7 @@ flowchart TB
         C3[增量同步服务<br/>按主键去重]
         C4[库存预警引擎<br/>计算可售天数]
         C5[审批规则引擎<br/>多规则+条件匹配]
+        C6[Agent 编排引擎<br/>状态机管理双 Agent 联动]
     end
 
     subgraph 飞书中台
@@ -127,16 +130,21 @@ flowchart TB
     C4 --> D3 --> D2 --> E2
     D3 --> D4
     B4 --> D1
+    B6 --> C6
     EV1 --> C5
     EV2 --> C5
     B5 --> C5
     C5 --> D5
+    C6 --> D1
+    C6 --> D2
     D5 --> D4
 
     style A1 fill:#2d5a3d,color:#fff
     style A2 fill:#2d5a3d,color:#fff
     style B1 fill:#4a3d2d,color:#fff
     style B5 fill:#4a3d2d,color:#fff
+    style B6 fill:#4a3d2d,color:#fff
+    style C6 fill:#5a2d4a,color:#fff
     style D3 fill:#5a2d2d,color:#fff
     style D4 fill:#5a2d2d,color:#fff
     style D5 fill:#5a2d2d,color:#fff
@@ -147,7 +155,7 @@ flowchart TB
 
 ---
 
-## 📦 项目功能清单（9 大模块）
+## 📦 项目功能清单
 
 ### 1. 多平台选品采集
 
@@ -621,6 +629,148 @@ A：进入"任务控制"页 → 确认调度器状态为"运行中" → 查看�
 
 ---
 
+### 14. 如何使用双 Agent 联动（业务用户教程）
+
+系统内置了 Agent 编排引擎，能像运营主管一样帮你"串联两个 AI Agent 自动接力"，无需人工切换。一个 Agent 跑完自动触发下一个，把结果直接喂给下一个 Agent 处理，全程不用写代码。
+
+#### 联动是什么
+
+把两个 Agent 像接力赛一样串起来，前一个的输出直接喂给后一个：
+
+| 联动场景 | 串联流程 | 业务价值 |
+|----------|----------|----------|
+| ① 选品 → Listing | 选品 Agent 推荐爆款候选 → 自动写入 Listing 库 → Listing Agent 生成优化标题/五点描述/关键词 | 从选品决策到上架文案一键打通 |
+| ② 洞察 → 选品复盘 | 数据洞察 Agent 发现爆款关键词 → 自动触发选品 Agent 重跑对应品类 | 数据反向驱动选品策略迭代 |
+
+#### 两个场景的工作流
+
+```mermaid
+flowchart TB
+    subgraph 场景1[场景① 选品 → Listing 联动]
+        S1[业务用户输入品类] --> S2[选品 Agent 执行]
+        S2 --> S3[提取 top_picks 推荐]
+        S3 --> S4[写入 Listing 库<br/>状态=待优化]
+        S4 --> S5[Listing Agent 优化文案]
+        S5 --> S6[写回 Listing 库<br/>状态=已优化]
+        S6 --> S7[推送联动进度卡片到飞书群]
+    end
+
+    subgraph 场景2[场景② 洞察 → 选品复盘]
+        T1[数据洞察 Agent 输出] --> T2{包含复盘关键词?}
+        T2 -->|是| T3[触发选品 Agent 重跑]
+        T2 -->|否| T4[无需复盘,流程结束]
+        T3 --> T5[生成新选品报告]
+    end
+
+    style S2 fill:#2d5a3d,color:#fff
+    style S5 fill:#5a3d2d,color:#fff
+    style S7 fill:#2d3a5a,color:#fff
+    style T2 fill:#5a2d4a,color:#fff
+    style T3 fill:#5a3d2d,color:#fff
+```
+
+#### 使用步骤（场景①为例，4 步）
+
+```mermaid
+flowchart LR
+    A[第1步<br/>打开 AI Agent 页] --> B[第2步<br/>切到联动 Tab]
+    B --> C[第3步<br/>选品类点启动联动]
+    C --> D[第4步<br/>看日志和飞书群]
+    D --> E[飞书群收到<br/>Listing 优化进度卡片]
+
+    style A fill:#2d5a3d,color:#fff
+    style C fill:#5a3d2d,color:#fff
+    style E fill:#2d3a5a,color:#fff
+```
+
+| 操作 | 说明 |
+|------|------|
+| 打开 AI Agent 页 | 侧边栏点"🤖 AI Agent" |
+| 切换 Tab | 点顶部"🔗 双 Agent 联动"标签 |
+| 选品类 | 下拉框选一个（家居收纳/厨房用品/户外家具/办公家具/卧室家具） |
+| 点"🚀 启动联动" | 后台线程启动 Orchestrator，UI 不会卡死 |
+| 等待 1-3 分钟 | 选品 Agent（30-60 秒） + Listing Agent（30-60 秒） |
+| 查看联动日志 | 实时显示每个阶段的进度和中间结果 |
+| 飞书群查看卡片 | 收到一张「🎯 双 Agent 联动 · Listing 优化完成」进度卡片 |
+
+#### 联动进度卡片包含什么
+
+| 区域 | 内容 |
+|------|------|
+| 标题 | 🎯 双 Agent 联动 · Listing 优化完成（绿色模板表示成功） |
+| 优化模式 | LLM 真实调用 / Mock 兜底（取决于是否配置 API Key） |
+| 优化统计 | 优化成功条数 / 失败条数 / 总处理条数 |
+| 优化样本 | 前 3 条优化结果（含 ASIN、商品名、优化标题、模式标签） |
+| 后续动作 | 1.查看 Listing 库 2.人工复核 3.状态改为「已上线」 |
+| 跳转按钮 | 点击直接打开飞书 Listing 库 |
+
+#### 状态机说明（技术细节）
+
+编排引擎基于纯 Python 实现的状态机管理联动流程：
+
+```mermaid
+stateDiagram-v2
+    [*] --> IDLE: 启动联动
+    IDLE --> SELECTING: 选品 Agent 启动
+    SELECTING --> SELECTED: 选品完成<br/>提取 top_picks
+    SELECTED --> LISTING_OPTIMIZING: 写入 Listing 库<br/>Listing Agent 启动
+    LISTING_OPTIMIZING --> COMPLETED: 优化完成<br/>推送卡片
+    SELECTING --> FAILED: 任一阶段异常
+    SELECTED --> FAILED: 任一阶段异常
+    LISTING_OPTIMIZING --> FAILED: 任一阶段异常
+    FAILED --> [*]: 记录错误日志
+    COMPLETED --> [*]: 返回结果摘要
+```
+
+| 状态 | 含义 | 触发动作 |
+|------|------|----------|
+| IDLE | 空闲，等待启动 | 业务用户点按钮 |
+| SELECTING | 选品 Agent 执行中 | 调用 run_selection_agent |
+| SELECTED | 选品完成，准备触发 Listing | 提取 top_picks + 写入 Listing 库 |
+| LISTING_OPTIMIZING | Listing Agent 执行中 | 调用 run_listing_agent |
+| COMPLETED | 全部完成 | 推送联动进度卡片 |
+| FAILED | 失败 | 记录错误，状态转为 FAILED |
+
+#### 未配置 API Key 也能跑通
+
+业务用户没配置 DeepSeek/Claude API Key 时，联动流程仍可跑通：
+
+- **选品 Agent**：使用 Mock 数据生成 5 个候选商品（不调 LLM）
+- **Listing Agent**：使用 Mock 模板化规则生成优化文案（不调 LLM）
+- **完整链路**：状态机流转、Listing 库写入、卡片推送全部正常执行
+
+接入 API Key 后**无需改任何代码**，自动切换到真实 LLM 生成优化文案。
+
+#### 场景②：洞察触发选品复盘
+
+数据洞察 Agent 完成后，业务用户可手动触发场景②复盘：
+
+1. 打开 AI Agent 页 → 切换到「🔗 双 Agent 联动」Tab
+2. 在场景②区域，把数据洞察 Agent 输出的 `top_priority` 和 `action_items` 粘贴到输入框
+3. 点"🚀 触发选品复盘"按钮
+4. 系统判断是否包含复盘关键词（"复盘"/"选品"/"爆款"/"上升"/"增长"）
+5. 命中关键词则自动触发选品 Agent 重跑对应品类
+6. 未命中则返回"无需复盘"提示
+
+#### 常见问题
+
+**Q：联动执行报错"未配置 Listing 库表 ID"怎么办？**
+A：去"系统配置"页 → 找到"Listing 库表 ID"字段填入 → 点"保存配置" → 重新运行联动。
+
+**Q：联动跑完了，飞书 Listing 库里没看到优化结果？**
+A：检查 3 项：①Listing 库表 ID 配置正确；②应用机器人有 Listing 库的写入权限；③查看任务控制页技术日志是否有 update_record 失败记录。
+
+**Q：联动很慢（超过 3 分钟）？**
+A：选品 Agent 和 Listing Agent 各调用 LLM 多轮推理，正常 1-3 分钟。如果超时，检查网络或换 DeepSeek（国内访问快）。未配置 API Key 时使用 Mock 模式，10 秒内即可完成。
+
+**Q：Mock 模式生成的优化文案质量怎么样？**
+A：Mock 模式是模板化占位实现，主要用来验证联动流程跑通。接入 API Key 后自动切换真实 LLM，生成质量会大幅提升。
+
+**Q：场景②复盘关键词能改吗？**
+A：当前关键词列表硬编码在 `src/ai/orchestrator.py` 的 `_REVIEW_TRIGGER_KEYWORDS` 中（复盘/选品/爆款/上升/增长）。如需调整，联系 IT 修改这一处即可。
+
+---
+
 ## 🚀 怎么使用（按角色分）
 
 ### 业务用户（无需任何代码操作）
@@ -803,11 +953,15 @@ cross-border-ai-platform/
 │   │   ├── model_router.py    # 多模型路由（按任务复杂度选模型）
 │   │   ├── prompt_manager.py  # Prompt 模板管理
 │   │   ├── tool_registry.py   # 工具注册中心
+│   │   ├── orchestrator.py    # Agent 编排引擎（状态机管理双 Agent 联动，v0.7.0）
 │   │   └── agents/            # Agent 实现
 │   │       ├── selection_agent.py  # 选品分析 Agent（ReAct 模式）
 │   │       ├── selection_tools.py  # 选品工具集（抓取/分析/保存）
 │   │       ├── insight_agent.py    # 数据洞察 Agent（ReAct 模式，v0.6.0）
-│   │       └── insight_tools.py    # 数据洞察工具集（拉数据/分析/保存，v0.6.0）
+│   │       ├── insight_tools.py    # 数据洞察工具集（拉数据/分析/保存，v0.6.0）
+│   │       ├── anomaly_detector.py # 硬规则异常检测器（v0.6.1）
+│   │       ├── listing_agent.py    # Listing 优化 Agent（ReAct 模式，v0.7.0）
+│   │       └── listing_tools.py    # Listing 工具集（拉取/优化/保存，v0.7.0）
 │   ├── scheduler/             # 定时任务
 │   │   ├── scheduler.py       # APScheduler 调度器
 │   │   ├── tasks.py           # 任务函数
@@ -824,7 +978,7 @@ cross-border-ai-platform/
 │       │   ├── task_page.py       # 任务控制（双选项卡日志 + 调度器 + 回调服务 + 公网隧道）
 │       │   ├── dashboard_page.py  # 数据看板
 │       │   ├── health_check_page.py # 健康检查（6 项检测，v0.4.0）
-│       │   ├── ai_agent_page.py   # AI Agent 选品分析 + 数据洞察双 Tab（v0.5.0+v0.6.0）
+│       │   ├── ai_agent_page.py   # AI Agent 选品分析 + 数据洞察 + 双 Agent 联动三 Tab（v0.5.0+v0.6.0+v0.7.0）
 │       │   └── manual_page.py     # 操作手册页（v0.4.0）
 │       ├── services/          # 服务层
 │       │   ├── env_service.py             # .env 读写
@@ -858,7 +1012,7 @@ cross-border-ai-platform/
 │   ├── grant_table_permission.py # 设置表格权限
 │   ├── run_task_once.py       # 手动触发任务
 │   └── e2e_test_pipeline.py   # 端到端验证
-├── tests/                     # 单元测试（326 个）
+├── tests/                     # 单元测试（415 个）
 ├── docs/                      # 文档（周报等）
 ├── pyproject.toml
 ├── .env.example
@@ -876,7 +1030,7 @@ cross-border-ai-platform/
 pytest
 ```
 
-**当前状态**：276 个测试通过（276 通过 + 6 个预先存在的失败与本次改动无关），AI 模块覆盖率 88-98%，可观测性模块 64-95%
+**当前状态**：415 个测试全部通过（含修复历史遗留 6 个失败：`_INSIGHT_SYSTEM_PROMPT` JSON 大括号未转义 + `_extract_amount` 函数未实现），AI 模块覆盖率 88-98%，可观测性模块 64-95%
 
 | 测试文件 | 覆盖范围 |
 |----------|----------|
@@ -896,6 +1050,10 @@ pytest
 | ai/test_insight_tools.py | 数据洞察工具（拉数据/分析/保存 + 辅助函数，mock 外部依赖，v0.6.0） |
 | ai/test_insight_agent.py | 数据洞察 Agent 集成测试（主流程/异常处理/recursion_limit，v0.6.0） |
 | ai/test_insight_card.py | 数据洞察日报卡片模板（结构/颜色映射/异常预警/截断，v0.6.0） |
+| ai/test_anomaly_detector.py | 硬规则异常检测器（销量跌幅/ACoS/库存三维度 + 严重程度分级，v0.6.1） |
+| ai/test_anomaly_card.py | 红色异常预警卡片模板（颜色/排序/统计字段/按钮，v0.6.1） |
+| ai/test_orchestrator.py | Agent 编排引擎（状态机/场景联动/JSON 提取/复盘判断，v0.7.0） |
+| ai/test_listing_agent.py | Listing 优化 Agent + 工具（主流程/Mock 兜底/LLM 失败回退/状态写回，v0.7.0） |
 | test_observability.py | LLM 监控 + SQLite 指标 + 告警阈值（v0.5.0） |
 
 ### 端到端测试
@@ -988,6 +1146,19 @@ curl -X POST http://127.0.0.1:8000/callback \
 - [x] **数据洞察日报卡片**（三维度配色 + 异常预警 + 行动建议 + 跳转按钮，v0.6.0）
 - [x] **GUI 双 Tab 切换**（选品分析 + 数据洞察，支持选日期手动重跑/补跑，v0.6.0）
 - [x] **数据洞察单元测试**（56 个测试覆盖工具/Agent/卡片模板，mock 外部依赖，v0.6.0）
+- [x] **异常检测增强**（销量跌幅 > 30%、ACoS > 50%、库存 ≤ 7 天硬规则兜底 LLM 漏判，v0.6.1）
+- [x] **红色异常预警卡片**（critical/warning 分级 + 建议动作 + 红色危险按钮，v0.6.1）
+- [x] **数据洞察联调脚本**（7 天模拟数据验证日报质量，含 2 条埋点异常，v0.6.1）
+- [x] **A/B 对比脚本**（GPT-4o-mini vs Claude 5 维度评分，支持 Mock/真实 API 模式，v0.6.1）
+- [x] **Agent 编排引擎**（基于纯 Python 状态机管理双 Agent 联动，支持断点续跑和进度回调，v0.7.0）
+- [x] **Listing 优化 Agent**（ReAct 模式，3 工具：拉取→LLM 优化/Mock 兜底→写回+推送，v0.7.0）
+- [x] **双 Agent 联动场景①**（选品 Agent 输出 → 写入 Listing 库 → Listing Agent 优化文案，一键跑通，v0.7.0）
+- [x] **双 Agent 联动场景②**（数据洞察发现爆款关键词 → 触发选品 Agent 复盘，v0.7.0）
+- [x] **Mock LLM 兜底机制**（未配置 API Key 时联动流程仍可跑通，接入 Key 后自动切换真实 LLM，v0.7.0）
+- [x] **联动进度卡片模板**（build_orchestration_card，7 种阶段颜色映射 + 优化样本展示 + 跳转按钮，v0.7.0）
+- [x] **Listing 库字段映射**（LISTING_FIELDS + picks_to_listing_records 转换函数，v0.7.0）
+- [x] **GUI 三 Tab 切换**（选品分析 + 数据洞察 + 双 Agent 联动，v0.7.0）
+- [x] **双 Agent 联动单元测试**（98 个测试覆盖编排引擎/Listing Agent/工具/Mock 兜底/状态机，v0.7.0）
 
 完整计划见 [28天实施计划.md](file:///d:\ai\07-26\28天实施计划.md)
 
@@ -997,14 +1168,24 @@ curl -X POST http://127.0.0.1:8000/callback \
 
 | 任务 | 说明 |
 |------|------|
-| 双 Agent 联动 | 选品 Agent 触发数据洞察 Agent，形成闭环 |
 | Docker 部署 | 容器化部署方案，便于企业级运维 |
+| GitHub Actions CI | push 自动跑测试、构建镜像、推送 GHCR |
 | v1.0.0 Release | 正式版发布，含全部功能 + 完整文档 + 端到端测试 |
 
 ---
 
 ## 📝 版本历史
 
+- **v0.7.0**：双 Agent 联动 + Agent 编排引擎
+  - Agent 编排引擎（`src/ai/orchestrator.py`）：纯 Python 状态机管理双 Agent 联动，5 状态流转（IDLE→SELECTING→SELECTED→LISTING_OPTIMIZING→COMPLETED），支持进度回调和断点续跑
+  - Listing 优化 Agent（`src/ai/agents/listing_agent.py` + `listing_tools.py`）：ReAct 模式，3 工具（fetch_pending_listings / optimize_listing / save_listing），LangChain v1.0 create_agent
+  - 联动场景①：选品 Agent 输出 → 自动写入 Listing 库 → Listing Agent 优化文案（一键跑通）
+  - 联动场景②：数据洞察发现爆款关键词 → 触发选品 Agent 复盘（5 个关键词触发：复盘/选品/爆款/上升/增长）
+  - Mock LLM 兜底机制：未配置 API Key 时联动流程仍可跑通，接入 Key 后自动切换真实 LLM，无需改代码
+  - 联动进度卡片模板（`build_orchestration_card`）：7 种阶段颜色映射 + 优化样本展示 + 跳转按钮
+  - Listing 库字段映射和同步服务（`field_mapping.py` + `sync_service.py::create_listing_sync_service`）
+  - GUI 升级为三 Tab（选品分析 + 数据洞察 + 双 Agent 联动）
+  - 新增 98 个单元测试（编排引擎 50 + Listing Agent 48），AI 模块测试总计 190 个全部通过
 - **v0.6.1**：数据洞察 Agent 联调 + 异常检测增强
   - 硬规则异常检测模块（`anomaly_detector.py`）：销量跌幅 > 30%、ACoS > 50%、库存 ≤ 7 天自动检测
   - `fetch_daily_data` 增加前一天数据拉取，支持环比跌幅检测

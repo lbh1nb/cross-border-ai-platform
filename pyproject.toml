@@ -1,6 +1,6 @@
 [project]
 name = "cross-border-ai-platform"
-version = "0.6.1"
+version = "0.7.0"
 description = "跨境电商 AI 运营中台：飞书 + AI Agent 全链路自动化"
 readme = "README.md"
 requires-python = ">=3.11"

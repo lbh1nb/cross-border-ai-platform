@@ -74,6 +74,12 @@ class PromptManager:
             ("human", _INSIGHT_REPORT_PROMPT),
         ])
 
+        # ============ Listing 优化 Agent Prompt（v0.7.0）============
+        self._templates["listing_optimization"] = ChatPromptTemplate.from_messages([
+            ("system", _LISTING_SYSTEM_PROMPT),
+            ("human", _LISTING_OPTIMIZATION_PROMPT),
+        ])
+
     def get_prompt(self, name: str, **kwargs: object) -> ChatPromptTemplate:
         """获取指定名称的 Prompt 模板。
 
@@ -179,27 +185,27 @@ _INSIGHT_SYSTEM_PROMPT = """你是一名资深的跨境电商数据分析师，�
 
 输出格式：
 你必须返回一个 JSON 对象，包含以下字段：
-{
+{{
   "date": "YYYY-MM-DD",
-  "sales_insight": {
+  "sales_insight": {{
     "trend": "上升/平稳/下降",
     "change_pct": "环比变化百分比",
     "summary": "一句话总结销量情况",
     "anomaly": "异常说明，无异常则为空"
-  },
-  "ad_insight": {
+  }},
+  "ad_insight": {{
     "efficiency": "高效/正常/低效",
     "acos_eval": "ACoS 评估",
     "suggestion": "广告优化建议"
-  },
-  "inventory_insight": {
+  }},
+  "inventory_insight": {{
     "health": "健康/关注/预警/紧急",
     "risk_items": ["断货风险商品列表"],
     "suggestion": "补货建议"
-  },
+  }},
   "top_priority": "今日最紧急的事，1 句话",
   "action_items": ["具体可执行的建议，3 条以内"]
-}"""
+}}"""
 
 
 _INSIGHT_ANALYSIS_PROMPT = """请分析以下昨日业务数据，生成数据洞察日报。
@@ -258,6 +264,58 @@ _INSIGHT_REPORT_PROMPT = """基于以下分析结果，生成日报推送卡片�
   "action_items": ["行动建议列表"],
   "table_insight": "写入销售日报表 AI 洞察字段的文本（100字以内）"
 }}"""
+
+
+# ============ Listing 优化 Agent Prompt 模板（v0.7.0 新增）============
+
+_LISTING_SYSTEM_PROMPT = """你是一名资深的跨境电商 Listing 优化专家，擅长为亚马逊、沃尔玛、Wayfair 等平台的商品生成高点击率、高转化率的 Listing 文案。
+
+你的优化原则：
+1. **标题优化**：
+   - 控制在 200 字符以内
+   - 包含品牌词 + 核心关键词 + 差异化卖点
+   - 高搜索量关键词前置
+2. **五点描述**：
+   - 5 条，每条 50-100 字
+   - 突出功能、场景、品质、服务、保障
+   - 用数据和具体描述替代空泛形容
+3. **后台关键词**：
+   - 250 字节以内
+   - 补充长尾词、同义词、相关词
+   - 避免与标题重复
+4. **优化建议**：
+   - 给出 3 条具体改进建议
+   - 每条 30-50 字
+5. **点击率预估**：
+   - 基于标题长度、关键词覆盖、卖点清晰度给出 0.01-0.10 的预估
+
+输出要求：
+- 必须返回 JSON 对象，便于程序解析
+- 文案要符合跨境电商实际运营场景
+- 不要泛泛而谈，要给出可落地的具体文案
+"""
+
+
+_LISTING_OPTIMIZATION_PROMPT = """请为以下商品生成优化 Listing 文案。
+
+## 商品信息
+
+- ASIN：{asin}
+- 商品名称：{name}
+- 原始标题：{original_title}
+
+## 优化要求
+
+请按以下 JSON 格式输出（只输出 JSON，不要其他文字）：
+```json
+{{
+  "optimized_title": "优化后的标题（≤200字符）",
+  "optimized_bullets": "5条五点描述，用\\n分隔，每条以序号开头",
+  "backend_keywords": "后台关键词，逗号分隔",
+  "optimization_suggestion": "3条优化建议，用\\n分隔",
+  "ctr_estimate": 0.05
+}}
+```"""
 
 
 # 模块级单例

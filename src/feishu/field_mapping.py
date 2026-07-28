@@ -59,6 +59,28 @@ INVENTORY_FIELDS = {
 
 
 # ============================================================
+# Listing 库表字段映射（v0.7.0 新增）
+# ============================================================
+# 主键字段：Listing 按 ASIN 去重（同一商品只有一条优化记录）
+LISTING_PRIMARY_KEYS = ["ASIN"]
+
+# Listing 库字段名配置
+LISTING_FIELDS = {
+    "asin": "ASIN",
+    "name": "商品名称",
+    "original_title": "原始标题",
+    "optimized_title": "优化标题",
+    "original_bullets": "原始五点描述",
+    "optimized_bullets": "优化五点描述",
+    "backend_keywords": "后台关键词",
+    "aplus_content": "A+文案",
+    "optimization_suggestion": "优化建议",
+    "ctr_estimate": "点击率预估",
+    "status": "状态",
+}
+
+
+# ============================================================
 # 销售日报表字段映射
 # ============================================================
 # 日报按 日期+平台 去重（同一天同平台只有一条日报）
@@ -104,6 +126,58 @@ def product_to_record(product: ProductInfo) -> dict[str, Any]:
         SELECTION_FIELDS["profit_margin"]: product.profit_margin,
         SELECTION_FIELDS["url"]: {"link": product.url, "text": product.name},
     }
+
+
+def product_to_listing_record(product: ProductInfo) -> dict[str, Any]:
+    """将 ProductInfo 转换为 Listing 库的初始记录格式（v0.7.0 新增）。
+
+    用途：双 Agent 联动场景①中，选品 Agent 输出的爆款候选商品
+    自动写入 Listing 库，状态为"待优化"，作为 Listing Agent 的输入队列。
+
+    Args:
+        product: 商品信息对象
+
+    Returns:
+        Listing 库初始记录字段字典（仅含原始信息，优化字段留空待 Listing Agent 填充）
+    """
+    return {
+        LISTING_FIELDS["asin"]: product.asin,
+        LISTING_FIELDS["name"]: product.name,
+        LISTING_FIELDS["original_title"]: product.name,
+        LISTING_FIELDS["status"]: "待优化",
+    }
+
+
+def picks_to_listing_records(
+    top_picks: list[dict[str, Any]],
+    product_name_map: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """将选品 Agent 的 top_picks 转换为 Listing 库记录列表（v0.7.0 新增）。
+
+    用途：选品 Agent 完成分析后，把推荐的 top_picks 商品写入 Listing 库，
+    形成"选品 → Listing 优化"的任务队列。
+
+    Args:
+        top_picks: 选品 Agent 输出的 top_picks 列表，每项含 asin/name/reason/estimated_margin
+        product_name_map: 可选的 ASIN → 商品名映射（用于补全 name 字段）
+
+    Returns:
+        Listing 库记录字段字典列表
+    """
+    records: list[dict[str, Any]] = []
+    name_map = product_name_map or {}
+    for pick in top_picks:
+        asin = pick.get("asin", "")
+        name = pick.get("name") or name_map.get(asin, "")
+        if not asin:
+            continue
+        records.append({
+            LISTING_FIELDS["asin"]: asin,
+            LISTING_FIELDS["name"]: name,
+            LISTING_FIELDS["original_title"]: name,
+            LISTING_FIELDS["status"]: "待优化",
+        })
+    return records
 
 
 def extract_primary_values(

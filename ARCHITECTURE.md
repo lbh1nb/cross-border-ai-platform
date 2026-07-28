@@ -192,6 +192,7 @@ sequenceDiagram
 | inventory_check | 每 30 分钟 | 库存预警等级更新 |
 | daily_report | 每天 18:00 | 数据洞察 Agent 执行（拉数据→LLM 三维度分析→写回表格+推送卡片，v0.6.0） |
 | data_cleanup | 每 3 天 2:00 | 删除旧数据防止堆积 |
+| 双 Agent 联动 | GUI 手动触发 | 选品→Listing、洞察→选品复盘（v0.7.0，详见 2.9 节） |
 
 **数据清理任务**（cleanup_task.py）：
 
@@ -738,7 +739,163 @@ flowchart LR
 - 支持 Mock 模式（默认）和真实 API 模式（`--real` 参数）
 - 生成 `docs/ab_compare_report.md` 对比报告
 
-### 2.9 可观测性模块（src/observability/，v0.5.0 新增）
+### 2.9 Agent 编排引擎（src/ai/orchestrator.py，v0.7.0 新增）
+
+**Agent 编排引擎**基于纯 Python 实现的状态机管理双 Agent 联动工作流，把"选品 Agent"和"Listing 优化 Agent"串联起来，前一个的输出直接喂给后一个。业务用户在 GUI 点一个按钮即可跑通完整链路，无需手动切换。
+
+```mermaid
+flowchart TB
+    subgraph 编排引擎[Agent 编排引擎 - 状态机]
+        O1[Orchestrator<br/>状态机管理器]
+        O2[OrchestrationContext<br/>运行时上下文]
+        O3[OrchestrationResult<br/>最终输出]
+    end
+
+    subgraph 场景1[场景① 选品 → Listing 联动]
+        S1[选品 Agent<br/>run_selection_agent]
+        S2[提取 top_picks<br/>JSON 解析]
+        S3[写入 Listing 库<br/>状态=待优化]
+        S4[Listing Agent<br/>run_listing_agent]
+        S5[推送联动进度卡片]
+    end
+
+    subgraph 场景2[场景② 洞察 → 选品复盘]
+        T1[数据洞察 Agent 输出<br/>top_priority + action_items]
+        T2{包含复盘关键词?}
+        T3[触发选品 Agent 重跑]
+        T4[无需复盘]
+    end
+
+    O1 --> S1
+    S1 --> S2 --> S3 --> S4 --> S5
+    O1 --> T1
+    T1 --> T2
+    T2 -->|是| T3
+    T2 -->|否| T4
+
+    style O1 fill:#5a2d4a,color:#fff
+    style S1 fill:#2d5a3d,color:#fff
+    style S4 fill:#5a3d2d,color:#fff
+    style S5 fill:#2d3a5a,color:#fff
+    style T2 fill:#5a2d4a,color:#fff
+    style T3 fill:#5a3d2d,color:#fff
+```
+
+**状态机定义**（`OrchestratorState`）：
+
+```mermaid
+stateDiagram-v2
+    [*] --> IDLE: 启动联动
+    IDLE --> SELECTING: 选品 Agent 启动
+    SELECTING --> SELECTED: 选品完成<br/>提取 top_picks
+    SELECTED --> LISTING_OPTIMIZING: 写入 Listing 库<br/>Listing Agent 启动
+    LISTING_OPTIMIZING --> COMPLETED: 优化完成<br/>推送卡片
+    SELECTING --> FAILED: 任一阶段异常
+    SELECTED --> FAILED: 任一阶段异常
+    LISTING_OPTIMIZING --> FAILED: 任一阶段异常
+    FAILED --> [*]: 记录错误日志
+    COMPLETED --> [*]: 返回结果摘要
+```
+
+| 状态 | 含义 | 触发动作 |
+|------|------|----------|
+| IDLE | 空闲，等待启动 | 业务用户点按钮 |
+| SELECTING | 选品 Agent 执行中 | 调用 `run_selection_agent` |
+| SELECTED | 选品完成，准备触发 Listing | 提取 top_picks + 写入 Listing 库 |
+| LISTING_OPTIMIZING | Listing Agent 执行中 | 调用 `run_listing_agent` |
+| COMPLETED | 全部完成 | 推送联动进度卡片 |
+| FAILED | 失败 | 记录错误，状态转为 FAILED |
+
+**为什么不用 LangGraph StateGraph**：
+- 联动流程状态明确、分支少，纯 Python 状态机更直观可控
+- 便于测试（直接 mock `selection_runner` / `listing_runner` 函数）
+- 不引入额外依赖，降低复杂度
+
+**依赖注入设计**：
+- `Orchestrator.__init__` 接受 `selection_runner` 和 `listing_runner` 可调用对象
+- 默认绑定真实的 `run_selection_agent` / `run_listing_agent`
+- 测试时注入 Mock 函数，避免真实 LLM 调用
+
+**场景①：选品 → Listing 联动**
+
+`run_selection_to_listing(category)` 完整流程：
+
+1. 启动选品 Agent（state=SELECTING），输入品类名
+2. 从 `agent_output` 文本中提取 `top_picks` JSON（支持 ` ```json ` 块和裸 JSON 两种格式）
+3. 把 top_picks 转换为 Listing 库记录（`picks_to_listing_records`），按 ASIN 主键增量同步
+4. 启动 Listing Agent（state=LISTING_OPTIMIZING），传入 `limit=created_count`
+5. Listing Agent 自动拉取"待优化"记录 → LLM/Mock 生成优化文案 → 写回表格 + 推送卡片
+6. 完成（state=COMPLETED），返回 `OrchestrationResult` 包含完整上下文
+
+**场景②：洞察 → 选品复盘**
+
+`run_insight_to_selection_review(top_priority, action_items)` 判断逻辑：
+
+- 检查 `top_priority` 和 `action_items` 是否包含复盘触发关键词
+- 关键词列表（`_REVIEW_TRIGGER_KEYWORDS`）：`复盘` / `选品` / `爆款` / `上升` / `增长`
+- 命中关键词 → 触发选品 Agent 重跑对应品类（默认"家居收纳"）
+- 未命中 → 返回"无需复盘"，状态直接转 COMPLETED
+
+**Listing 优化 Agent**（`src/ai/agents/listing_agent.py` + `listing_tools.py`）：
+
+| 工具 | 功能 | 输入 | 输出 |
+|------|------|------|------|
+| `fetch_pending_listings` | 查询 Listing 库"待优化"状态记录 | limit（默认 5） | JSON（含 record_id + ASIN + 名称 + 原始标题） |
+| `optimize_listing` | LLM 生成优化文案（标题/五点描述/关键词/建议/CTR 预估） | listings_json | JSON（含每条记录的优化结果 + mode=llm/mock） |
+| `save_listing` | 按 ASIN 主键更新 Listing 库 + 推送联动进度卡片 | optimizations_json | JSON（含 updated_records + pushed_to_feishu） |
+
+**Mock LLM 兜底机制**（`listing_tools.py::_is_llm_configured`）：
+
+```mermaid
+flowchart LR
+    A[optimize_listing 工具] --> B{API Key 已配置?}
+    B -->|是| C[调用真实 LLM<br/>_llm_optimize_single]
+    B -->|否| D[Mock 兜底<br/>_mock_optimize_single]
+    C --> E{LLM 返回合法 JSON?}
+    E -->|是| F[标记 source=llm]
+    E -->|否| G[回退 Mock 兜底]
+    D --> H[标记 source=mock]
+    G --> H
+    F --> I[返回优化结果]
+    H --> I
+
+    style C fill:#2d5a3d,color:#fff
+    style D fill:#5a3d2d,color:#fff
+    style G fill:#5a2d4a,color:#fff
+    style I fill:#2d3a5a,color:#fff
+```
+
+- 业务用户未配置 API Key 时联动流程仍可跑通（Mock 模板化优化）
+- 接入 API Key 后**无需改代码**，`_is_llm_configured()` 自动返回 True，切换到真实 LLM
+- LLM 调用失败或返回非法 JSON 时自动回退 Mock，保证流程不中断
+
+**联动进度卡片**（`src/feishu/card_templates.py::build_orchestration_card`）：
+
+| 阶段 | 颜色 | 用途 |
+|------|------|------|
+| `selection_started` | blue | 选品 Agent 启动通知 |
+| `selection_done` | green | 选品完成通知 |
+| `listing_started` | blue | Listing Agent 启动通知 |
+| `listing_completed` | green | Listing 优化完成通知（含优化样本和统计） |
+| `review_triggered` | orange | 洞察触发复盘通知 |
+| `no_review_needed` | grey | 洞察未触发复盘通知 |
+| `failed` | red | 联动失败告警 |
+
+**Listing 库字段映射和同步**（`src/feishu/field_mapping.py` + `sync_service.py`）：
+
+- `LISTING_FIELDS`：12 个字段映射（asin/name/original_title/optimized_title/optimized_bullets/backend_keywords/...）
+- `LISTING_PRIMARY_KEYS = ["ASIN"]`：同一商品只有一条优化记录
+- `picks_to_listing_records(top_picks)`：把选品 Agent 输出转换为 Listing 库可写入的记录格式
+- `create_listing_sync_service()`：工厂函数创建 Listing 库同步服务（v0.7.0 新增）
+
+**GUI 入口**（`src/gui/pages/ai_agent_page.py`）：
+- 升级为三 Tab 设计：选品分析 + 数据洞察 + 双 Agent 联动
+- Tab3「双 Agent 联动」提供两个场景的可视化操作入口
+- 场景①：下拉选品类 + "🚀 启动联动"按钮 + 实时日志显示
+- 场景②：粘贴洞察输出 + "🚀 触发选品复盘"按钮 + 触发结果反馈
+- 后台线程执行编排引擎（`OrchestrationWorkerThread`），不阻塞 UI
+
+### 2.10 可观测性模块（src/observability/，v0.5.0 新增）
 
 **LLM 调用监控闭环**：自动记录每次 LLM 调用的耗时、Token、成本，失败率超阈值时飞书告警。
 
@@ -965,8 +1122,20 @@ flowchart LR
 | test_feishu_bot.py | Webhook 机器人消息发送 / 库存预警卡片模板 |
 | test_card_callback.py | 选品报告卡片 / 销售日报卡片 / 审批卡片 / FastAPI 回调服务 |
 | test_approval.py | ApprovalClient / 表单构建 / 审批状态变更回调 / ASIN 提取 / 自动触发任务 |
+| ai/test_model_router.py | 多模型路由（provider 检测/任务映射/国内大模型识别，v0.5.0+ v0.5.1） |
+| ai/test_tool_registry.py | 工具注册中心（v0.5.0） |
+| ai/test_selection_tools.py | 选品工具（抓取/分析/保存，v0.5.0） |
+| ai/test_selection_agent.py | 选品 Agent 集成测试（v0.5.0） |
+| ai/test_insight_tools.py | 数据洞察工具（拉数据/分析/保存，v0.6.0） |
+| ai/test_insight_agent.py | 数据洞察 Agent 集成测试（v0.6.0） |
+| ai/test_insight_card.py | 数据洞察日报卡片模板（v0.6.0） |
+| ai/test_anomaly_detector.py | 硬规则异常检测器（销量跌幅/ACoS/库存三维度 + 严重程度分级，v0.6.1） |
+| ai/test_anomaly_card.py | 红色异常预警卡片模板（颜色/排序/统计字段/按钮，v0.6.1） |
+| ai/test_orchestrator.py | Agent 编排引擎（状态机/场景联动/JSON 提取/复盘判断，v0.7.0） |
+| ai/test_listing_agent.py | Listing 优化 Agent + 工具（主流程/Mock 兜底/LLM 失败回退/状态写回，v0.7.0） |
+| test_observability.py | LLM 监控 + SQLite 指标 + 告警阈值（v0.5.0） |
 
-**当前测试结果**：161 个测试全部通过，覆盖率 63%。
+**当前测试结果**：415 个测试全部通过（含修复历史遗留 6 个失败：`_INSIGHT_SYSTEM_PROMPT` JSON 大括号未转义 + `_extract_amount` 函数未实现），AI 模块覆盖率 88-98%。
 
 **test_approval.py 覆盖场景**（29 个测试，08-06 新增）：
 - ApprovalClient 配置：全配置通过 / 缺 approval_code / 缺 approver_open_id / 缺 node_id
