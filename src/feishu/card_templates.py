@@ -851,3 +851,167 @@ def build_ai_analysis_card(
         },
         "elements": elements,
     }
+
+
+def build_ai_insight_card(
+    date_str: str,
+    analysis: dict[str, Any],
+    table_url: str = "",
+) -> dict[str, Any]:
+    """构建数据洞察日报卡片（v0.6.0 新增）。
+
+    数据洞察 Agent 分析完成后，向飞书群推送此卡片，展示：
+    - 三维度概览（销量/广告/库存）
+    - 今日最紧急事项
+    - 异常项目列表（红色标记）
+    - 行动建议（按优先级排序）
+    - "查看销售日报"按钮跳转多维表格
+
+    Args:
+        date_str: 日期字符串 YYYY-MM-DD
+        analysis: analyze_daily_data 返回的 analysis 字典
+        table_url: 销售日报表链接
+
+    Returns:
+        飞书卡片 JSON 对象
+    """
+    sales = analysis.get("sales_insight", {})
+    ad = analysis.get("ad_insight", {})
+    inv = analysis.get("inventory_insight", {})
+
+    # 三维度健康度配色
+    trend = sales.get("trend", "未知")
+    trend_color = {"上升": "green", "平稳": "blue", "下降": "red"}.get(trend, "grey")
+
+    efficiency = ad.get("efficiency", "未知")
+    efficiency_color = {"高效": "green", "正常": "blue", "低效": "red"}.get(efficiency, "grey")
+
+    health = inv.get("health", "未知")
+    health_color = {"健康": "green", "关注": "blue", "预警": "orange", "紧急": "red"}.get(health, "grey")
+
+    elements: list[dict[str, Any]] = [
+        # 三维度概览
+        {
+            "tag": "div",
+            "fields": [
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**销量趋势**\n<font color='{trend_color}'>{trend}</font>",
+                    },
+                },
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**广告效率**\n<font color='{efficiency_color}'>{efficiency}</font>",
+                    },
+                },
+                {
+                    "is_short": True,
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**库存健康**\n<font color='{health_color}'>{health}</font>",
+                    },
+                },
+            ],
+        },
+        {"tag": "hr"},
+    ]
+
+    # 销量概览
+    if sales.get("summary"):
+        elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": f"**📈 销量**\n{sales['summary']}",
+            },
+        })
+
+    # 广告概览
+    if ad.get("acos_eval"):
+        elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": f"**💰 广告**\n{ad['acos_eval']}",
+            },
+        })
+
+    # 库存概览
+    if inv.get("suggestion"):
+        elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": f"**📦 库存**\n{inv['suggestion']}",
+            },
+        })
+
+    # 异常项目（如果有）
+    anomalies: list[str] = []
+    if sales.get("anomaly"):
+        anomalies.append(f"销量异常：{sales['anomaly']}")
+    risk_items = inv.get("risk_items", [])
+    if risk_items:
+        anomalies.append(f"断货风险：{', '.join(risk_items[:3])}")
+
+    if anomalies:
+        elements.append({"tag": "hr"})
+        anomaly_text = "\n".join(f"⚠️ {a}" for a in anomalies)
+        elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": f"**🚨 异常预警**\n{anomaly_text}",
+            },
+        })
+
+    # 今日最紧急
+    if analysis.get("top_priority"):
+        elements.append({"tag": "hr"})
+        elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": f"**🔥 今日最紧急**\n{analysis['top_priority']}",
+            },
+        })
+
+    # 行动建议
+    action_items = analysis.get("action_items", [])
+    if action_items:
+        actions_text = "\n".join(f"{i+1}. {a}" for i, a in enumerate(action_items[:3]))
+        elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": f"**📋 行动建议**\n{actions_text}",
+            },
+        })
+
+    # "查看销售日报"按钮
+    if table_url:
+        elements.append({
+            "tag": "action",
+            "actions": [{
+                "tag": "button",
+                "text": {"tag": "plain_text", "content": "📊 查看销售日报"},
+                "url": table_url,
+                "type": "primary",
+            }],
+        })
+
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {
+                "tag": "plain_text",
+                "content": f"🤖 数据洞察日报 · {date_str}",
+            },
+            "template": "blue",
+        },
+        "elements": elements,
+    }

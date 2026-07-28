@@ -26,6 +26,7 @@
 | **AI Agent 选品分析** | ✅ 已完成 | ReAct 模式 Agent，自动抓取→分析→推送全流程，GUI 一键运行（v0.5.0） |
 | **LLM 调用可观测性** | ✅ 已完成 | Callback 自动记录耗时/Token/成本到 SQLite，失败率 >10% 飞书告警（v0.5.0） |
 | **国内大模型支持** | ✅ 已完成 | 一套代码兼容 DeepSeek/通义千问/智谱 GLM/Kimi，无需代理国内直连（v0.5.1） |
+| **数据洞察 Agent** | ✅ 已完成 | 每日 18:00 自动拉数据→LLM 三维度分析→写回表格+推送日报卡片（v0.6.0） |
 
 ### 🖥️ 桌面 GUI 预览
 
@@ -88,6 +89,7 @@ flowchart TB
         B1[选品采集<br/>工作日 9:00]
         B2[库存检查<br/>每 30 分钟]
         B3[数据清理<br/>每 3 天 2:00]
+        B4[数据洞察 Agent<br/>每日 18:00]
         B5[审批流兜底扫描<br/>每小时整点]
     end
 
@@ -123,6 +125,7 @@ flowchart TB
     B2 --> C4 --> D1
     C4 --> D3 --> D2 --> E2
     D3 --> D4
+    B4 --> D1
     EV1 --> C5
     EV2 --> C5
     B5 --> C5
@@ -513,6 +516,110 @@ ModelRouter 会根据 `OPENAI_API_BASE` 中的关键字自动识别国内大模�
 
 ---
 
+### 13. 如何使用数据洞察 Agent（业务用户教程）
+
+系统内置了数据洞察 Agent，每天 18:00 自动分析昨日销售和库存数据，生成结构化日报推送到飞书群。本页面也支持业务用户手动重跑或补跑指定日期。
+
+#### Agent 能做什么
+
+| 能力 | 具体说明 |
+|------|----------|
+| 自动拉数据 | 从飞书多维表格拉昨日销售日报 + 当前库存预警 |
+| AI 三维度分析 | LLM 从销量趋势、广告效率、库存健康三维度生成洞察 |
+| 自动写回表格 | 把 AI 洞察文本写回销售日报表的"AI洞察"字段 |
+| 推送日报卡片 | 飞书群收到结构化日报卡片，含异常预警和行动建议 |
+| 定时自动执行 | 每日 18:00 由定时任务自动触发，无需人工干预 |
+| 手动补跑 | GUI 支持选日期手动重跑，便于核查历史数据 |
+
+#### 使用方式（两种）
+
+**方式 1：自动执行（默认，无需操作）**
+
+每日 18:00 由后台调度器自动触发，业务用户只需在飞书群查看日报卡片。
+
+**方式 2：手动重跑（补跑指定日期）**
+
+```mermaid
+flowchart LR
+    A[第1步<br/>打开 AI Agent 页] --> B[第2步<br/>切换到数据洞察 Tab]
+    B --> C[第3步<br/>选日期点立即运行]
+    C --> D[第4步<br/>看日志和飞书群]
+    D --> E[飞书群收到<br/>数据洞察日报]
+
+    style A fill:#2d5a3d,color:#fff
+    style C fill:#5a3d2d,color:#fff
+    style E fill:#2d3a5a,color:#fff
+```
+
+| 操作 | 说明 |
+|------|------|
+| 打开 AI Agent 页 | 侧边栏点"🤖 AI Agent" |
+| 切换 Tab | 点顶部"📊 数据洞察"标签 |
+| 选日期 | 默认昨天，可点"📋 设为昨天"快速重置 |
+| 点"🚀 立即运行" | 后台线程启动 Agent，UI 不会卡死 |
+| 等待 30-60 秒 | Agent 自动拉数据 → LLM 分析 → 写回表格 + 推送卡片 |
+
+#### 日报卡片包含什么
+
+| 区域 | 内容 |
+|------|------|
+| 三维度概览 | 销量趋势（上升/平稳/下降）、广告效率（高效/正常/低效）、库存健康（健康/关注/预警/紧急） |
+| 销量分析 | 销售额/订单数趋势，异常跌幅标记 |
+| 广告分析 | ACoS 评估，优化建议 |
+| 库存分析 | 断货风险，补货优先级 |
+| 异常预警 | 销量异常 + 断货风险 SKU 列表（红色标记） |
+| 今日最紧急 | 系统判定的最紧急事项 |
+| 行动建议 | 按优先级排序的前 3 条建议 |
+| 查看销售日报按钮 | 跳转飞书多维表格 |
+
+#### Agent 工作流程（透明可观测）
+
+```mermaid
+sequenceDiagram
+    participant Sched as 定时任务 18:00
+    participant Agent as 数据洞察 Agent
+    participant LLM as 国内大模型
+    participant Tools as 三个工具
+    participant Feishu as 飞书
+
+    Sched->>Agent: 触发日报生成
+    Agent->>LLM: 思考任务（ReAct 第1轮）
+    LLM-->>Agent: 决定先拉数据
+    Agent->>Tools: fetch_daily_data(昨天)
+    Tools->>Feishu: 查询销售日报表
+    Tools->>Feishu: 查询库存预警表
+    Tools-->>Agent: 销售+库存数据 JSON
+    Agent->>LLM: 思考任务（ReAct 第2轮）
+    LLM-->>Agent: 决定分析数据
+    Agent->>Tools: analyze_daily_data(数据)
+    Tools->>LLM: 三维度分析请求
+    LLM-->>Tools: 结构化洞察 JSON
+    Tools-->>Agent: 分析结果
+    Agent->>LLM: 思考任务（ReAct 第3轮）
+    LLM-->>Agent: 决定保存报告
+    Agent->>Tools: save_insight_report(分析)
+    Tools->>Feishu: 写回 AI 洞察字段
+    Tools->>Feishu: 推送日报卡片到群
+    Tools-->>Agent: 保存成功
+    Agent-->>Sched: 完成
+```
+
+#### 常见问题
+
+**Q：日报卡片没收到？**
+A：检查 3 项：①任务控制页调度器是否启动；②系统配置页是否配置了 `FEISHU_CHAT_ID`；③AI Agent 页配置的 API Key 是否有效。
+
+**Q：AI 洞察字段是空的？**
+A：可能 LLM 调用失败，查看任务控制页技术日志。常见原因是 API Key 余额不足或网络超时。
+
+**Q：怎么补跑前天的日报？**
+A：打开 AI Agent 页 → 数据洞察 Tab → 点"📋 设为昨天"改为手动选日期 → 选前天 → 点"🚀 立即运行"。
+
+**Q：18:00 定时任务没触发？**
+A：进入"任务控制"页 → 确认调度器状态为"运行中" → 查看业务日志是否有 18:00 的执行记录。
+
+---
+
 ## 🚀 怎么使用（按角色分）
 
 ### 业务用户（无需任何代码操作）
@@ -534,6 +641,7 @@ IT/运维人员会在你的电脑上双击 `scripts\一键安装.bat` 完成全�
 | 工作日 09:00 | 采集多平台热门商品 | 选品池表 → "选品决策"视图 |
 | 每 30 分钟 | 更新库存预警等级 | 库存预警表 → "预警看板"视图 |
 | 每 30 分钟 | 紧急/预警库存自动推送飞书群 | 飞书告警群 → 查看告警卡片 |
+| 每日 18:00 | AI 生成数据洞察日报并推送飞书群 | 飞书告警群 → 查看日报卡片 + 销售日报表"AI洞察"字段 |
 | 业务事件触发 | 符合审批规则的记录自动创建审批单 | 飞书"审批中心" → 待审批列表 |
 | 每小时整点 | 兜底扫描补触发遗漏记录 | 无需操作 |
 | 每 3 天 02:00 | 自动清理旧数据 | 无需操作 |
@@ -696,7 +804,9 @@ cross-border-ai-platform/
 │   │   ├── tool_registry.py   # 工具注册中心
 │   │   └── agents/            # Agent 实现
 │   │       ├── selection_agent.py  # 选品分析 Agent（ReAct 模式）
-│   │       └── selection_tools.py  # 选品工具集（抓取/分析/保存）
+│   │       ├── selection_tools.py  # 选品工具集（抓取/分析/保存）
+│   │       ├── insight_agent.py    # 数据洞察 Agent（ReAct 模式，v0.6.0）
+│   │       └── insight_tools.py    # 数据洞察工具集（拉数据/分析/保存，v0.6.0）
 │   ├── scheduler/             # 定时任务
 │   │   ├── scheduler.py       # APScheduler 调度器
 │   │   ├── tasks.py           # 任务函数
@@ -713,7 +823,7 @@ cross-border-ai-platform/
 │       │   ├── task_page.py       # 任务控制（双选项卡日志 + 调度器 + 回调服务 + 公网隧道）
 │       │   ├── dashboard_page.py  # 数据看板
 │       │   ├── health_check_page.py # 健康检查（6 项检测，v0.4.0）
-│       │   ├── ai_agent_page.py   # AI Agent 选品分析（一键运行，v0.5.0）
+│       │   ├── ai_agent_page.py   # AI Agent 选品分析 + 数据洞察双 Tab（v0.5.0+v0.6.0）
 │       │   └── manual_page.py     # 操作手册页（v0.4.0）
 │       ├── services/          # 服务层
 │       │   ├── env_service.py             # .env 读写
@@ -747,7 +857,7 @@ cross-border-ai-platform/
 │   ├── grant_table_permission.py # 设置表格权限
 │   ├── run_task_once.py       # 手动触发任务
 │   └── e2e_test_pipeline.py   # 端到端验证
-├── tests/                     # 单元测试（258 个）
+├── tests/                     # 单元测试（326 个）
 ├── docs/                      # 文档（周报等）
 ├── pyproject.toml
 ├── .env.example
@@ -765,7 +875,7 @@ cross-border-ai-platform/
 pytest
 ```
 
-**当前状态**：220 个测试通过（215 通过 + 5 个预先存在的 _extract_amount 导入失败，与本次改动无关），AI 模块覆盖率 88-93%，可观测性模块 64-95%
+**当前状态**：276 个测试通过（276 通过 + 6 个预先存在的失败与本次改动无关），AI 模块覆盖率 88-98%，可观测性模块 64-95%
 
 | 测试文件 | 覆盖范围 |
 |----------|----------|
@@ -782,6 +892,9 @@ pytest
 | ai/test_tool_registry.py | 工具注册中心（注册/获取/描述，v0.5.0） |
 | ai/test_selection_tools.py | 选品工具（抓取/分析/保存，mock 外部依赖，v0.5.0） |
 | ai/test_selection_agent.py | 选品 Agent 集成测试（主流程/异常处理，v0.5.0） |
+| ai/test_insight_tools.py | 数据洞察工具（拉数据/分析/保存 + 辅助函数，mock 外部依赖，v0.6.0） |
+| ai/test_insight_agent.py | 数据洞察 Agent 集成测试（主流程/异常处理/recursion_limit，v0.6.0） |
+| ai/test_insight_card.py | 数据洞察日报卡片模板（结构/颜色映射/异常预警/截断，v0.6.0） |
 | test_observability.py | LLM 监控 + SQLite 指标 + 告警阈值（v0.5.0） |
 
 ### 端到端测试
@@ -870,6 +983,10 @@ curl -X POST http://127.0.0.1:8000/callback \
 - [x] **国内大模型 OpenAI 兼容接口支持**（DeepSeek/通义千问/智谱 GLM/Kimi 四家，无需代理国内直连，v0.5.1）
 - [x] **国内大模型自动识别**（根据 OPENAI_API_BASE 切换模型名，如 deepseek-chat / deepseek-reasoner，v0.5.1）
 - [x] **GUI AI 模型配置分组**（3 个输入框：API Base / API Key / Anthropic Key，保存后立即生效，v0.5.1）
+- [x] **数据洞察 Agent**（ReAct 模式，3 工具：拉数据→LLM 分析→写回+推送，每日 18:00 自动执行，v0.6.0）
+- [x] **数据洞察日报卡片**（三维度配色 + 异常预警 + 行动建议 + 跳转按钮，v0.6.0）
+- [x] **GUI 双 Tab 切换**（选品分析 + 数据洞察，支持选日期手动重跑/补跑，v0.6.0）
+- [x] **数据洞察单元测试**（56 个测试覆盖工具/Agent/卡片模板，mock 外部依赖，v0.6.0）
 
 完整计划见 [28天实施计划.md](file:///d:\ai\07-26\28天实施计划.md)
 
@@ -879,8 +996,6 @@ curl -X POST http://127.0.0.1:8000/callback \
 
 | 任务 | 说明 |
 |------|------|
-| 数据洞察 Agent | 从多维表格拉取昨日数据 → LLM 生成日报 → 推送飞书群 |
-| 日报定时推送 | 每天 18:00 自动生成销售日报并推送飞书群 |
 | 双 Agent 联动 | 选品 Agent 触发数据洞察 Agent，形成闭环 |
 | Docker 部署 | 容器化部署方案，便于企业级运维 |
 | v1.0.0 Release | 正式版发布，含全部功能 + 完整文档 + 端到端测试 |
@@ -889,6 +1004,15 @@ curl -X POST http://127.0.0.1:8000/callback \
 
 ## 📝 版本历史
 
+- **v0.6.0**：数据洞察 Agent 上线
+  - 数据洞察 Agent（ReAct 模式，3 工具：拉数据→LLM 分析→写回+推送）
+  - 每日 18:00 自动触发日报生成（接入 APScheduler 定时任务）
+  - 数据洞察日报卡片（三维度配色 + 异常预警 + 行动建议 + 跳转按钮）
+  - GUI AI Agent 页面升级为双 Tab（选品分析 + 数据洞察）
+  - 数据洞察 Tab 支持选日期手动重跑/补跑
+  - LLM 三维度分析（销量趋势/广告效率/库存健康，结构化 JSON 输出）
+  - AI 洞察文本自动写回销售日报表"AI洞察"字段
+  - 新增 56 个单元测试（覆盖工具/Agent/卡片模板，AI 模块覆盖率 88-98%）
 - **v0.5.1**：国内大模型支持 + AI Agent 使用文档
   - 国内大模型 OpenAI 兼容接口支持（DeepSeek/通义千问/智谱 GLM/Kimi 四家，无需代理国内直连）
   - 根据 OPENAI_API_BASE 自动识别国内大模型并切换模型名（如 deepseek-chat / deepseek-reasoner）

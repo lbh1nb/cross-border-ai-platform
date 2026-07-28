@@ -59,6 +59,21 @@ class PromptManager:
             ("human", _SELECTION_REPORT_PROMPT),
         ])
 
+        # ============ 数据洞察 Agent Prompt（v0.6.0）============
+        self._templates["insight_system"] = ChatPromptTemplate.from_messages([
+            ("system", _INSIGHT_SYSTEM_PROMPT),
+        ])
+
+        self._templates["insight_analysis"] = ChatPromptTemplate.from_messages([
+            ("system", _INSIGHT_SYSTEM_PROMPT),
+            ("human", _INSIGHT_ANALYSIS_PROMPT),
+        ])
+
+        self._templates["insight_report"] = ChatPromptTemplate.from_messages([
+            ("system", _INSIGHT_SYSTEM_PROMPT),
+            ("human", _INSIGHT_REPORT_PROMPT),
+        ])
+
     def get_prompt(self, name: str, **kwargs: object) -> ChatPromptTemplate:
         """获取指定名称的 Prompt 模板。
 
@@ -144,6 +159,105 @@ _SELECTION_REPORT_PROMPT = """基于以下选品分析结果，生成一份给�
 4. 字数控制在 200-300 字
 
 请直接输出报告内容（纯文本，不要 Markdown 格式）："""
+
+
+# ============ 数据洞察 Agent Prompt 模板（v0.6.0）============
+
+_INSIGHT_SYSTEM_PROMPT = """你是一名资深的跨境电商数据分析师，擅长从销售日报和库存数据中发现业务洞察。
+
+你的职责：
+1. 分析昨日销售数据，识别销量趋势和异常
+2. 评估广告投放效率（ACoS）
+3. 监控库存健康度，提前预警断货风险
+4. 生成结构化日报，推送到飞书群
+
+分析原则：
+- 数据驱动：所有结论必须基于具体数据，不要泛泛而谈
+- 简洁直接：每个洞察用 1-2 句话说清楚，不要长篇大论
+- 可操作：每个建议必须能落地（如"降低广告预算 20%"而非"优化广告"）
+- 异常优先：异常跌幅、断货风险要放在最前面，用【异常】标记
+
+输出格式：
+你必须返回一个 JSON 对象，包含以下字段：
+{
+  "date": "YYYY-MM-DD",
+  "sales_insight": {
+    "trend": "上升/平稳/下降",
+    "change_pct": "环比变化百分比",
+    "summary": "一句话总结销量情况",
+    "anomaly": "异常说明，无异常则为空"
+  },
+  "ad_insight": {
+    "efficiency": "高效/正常/低效",
+    "acos_eval": "ACoS 评估",
+    "suggestion": "广告优化建议"
+  },
+  "inventory_insight": {
+    "health": "健康/关注/预警/紧急",
+    "risk_items": ["断货风险商品列表"],
+    "suggestion": "补货建议"
+  },
+  "top_priority": "今日最紧急的事，1 句话",
+  "action_items": ["具体可执行的建议，3 条以内"]
+}"""
+
+
+_INSIGHT_ANALYSIS_PROMPT = """请分析以下昨日业务数据，生成数据洞察日报。
+
+## 昨日销售数据（按平台）
+
+{sales_data}
+
+## 当前库存预警数据
+
+{inventory_data}
+
+## 分析要求
+
+1. **销量维度**：
+   - 计算总销售额、总订单数
+   - 识别销量跌幅超过 30% 的平台，标记为【异常】
+   - 给出环比变化（如果有多天数据）
+
+2. **广告维度**：
+   - 评估 ACoS 是否在合理范围（一般 15%-30% 算正常）
+   - ACoS > 50% 标记为低效
+   - 给出广告预算调整建议
+
+3. **库存维度**：
+   - 列出所有"紧急"和"预警"等级的商品
+   - 计算总潜在断货风险数
+   - 给出补货优先级建议
+
+4. **综合判断**：
+   - 选出今日最紧急的 1 件事
+   - 给出 3 条以内的可执行建议
+
+请返回 JSON 对象，不要有任何其他文字。"""
+
+
+_INSIGHT_REPORT_PROMPT = """基于以下分析结果，生成日报推送卡片内容。
+
+分析结果：
+{analysis_json}
+
+生成要求：
+1. 卡片标题：包含日期和核心结论
+2. 三维度概览：用一句话概括销量/广告/库存
+3. 异常标记：【异常】开头的项目要突出显示
+4. 行动建议：按优先级排序，最多 3 条
+5. 总字数控制在 300 字以内
+
+请返回 JSON 对象，包含：
+{{
+  "card_title": "卡片标题",
+  "sales_summary": "销量概览",
+  "ad_summary": "广告概览",
+  "inventory_summary": "库存概览",
+  "anomalies": ["异常项目列表"],
+  "action_items": ["行动建议列表"],
+  "table_insight": "写入销售日报表 AI 洞察字段的文本（100字以内）"
+}}"""
 
 
 # 模块级单例

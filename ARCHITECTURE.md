@@ -190,7 +190,7 @@ sequenceDiagram
 |---------|----------|------|
 | product_collection | 工作日 9:00 | 多平台多品类增量同步采集 |
 | inventory_check | 每 30 分钟 | 库存预警等级更新 |
-| daily_report | 每天 18:00 | 日报生成（预留） |
+| daily_report | 每天 18:00 | 数据洞察 Agent 执行（拉数据→LLM 三维度分析→写回表格+推送卡片，v0.6.0） |
 | data_cleanup | 每 3 天 2:00 | 删除旧数据防止堆积 |
 
 **数据清理任务**（cleanup_task.py）：
@@ -599,7 +599,100 @@ sequenceDiagram
 - 结果表格（自动解析 Agent 输出中的 top_picks）
 - API Key 状态提示（未配置时橙色警告）
 
-### 2.8 可观测性模块（src/observability/，v0.5.0 新增）
+### 2.8 数据洞察 Agent（src/ai/agents/insight_*.py，v0.6.0 新增）
+
+**数据洞察 Agent** 复用选品 Agent 的 ReAct 架构，每日 18:00 自动分析销售和库存数据，生成结构化日报推送到飞书群。业务用户也可在 GUI 手动重跑或补跑指定日期。
+
+```mermaid
+flowchart TB
+    subgraph 数据洞察Agent[数据洞察 Agent - ReAct 模式]
+        I1[create_insight_agent<br/>LangChain v1.0]
+        I2[fetch_daily_data<br/>拉销售+库存数据]
+        I3[analyze_daily_data<br/>LLM 三维度分析]
+        I4[save_insight_report<br/>写回表格+推送卡片]
+    end
+
+    subgraph 触发源
+        T1[定时任务<br/>每日 18:00]
+        T2[GUI 手动触发<br/>选日期重跑]
+    end
+
+    subgraph 外部依赖
+        LLM[LLM 服务<br/>国内大模型]
+        FS[飞书多维表格<br/>+ 应用机器人]
+    end
+
+    T1 --> I1
+    T2 --> I1
+    I1 --> I2
+    I1 --> I3
+    I1 --> I4
+    I2 --> FS
+    I3 --> LLM
+    I4 --> FS
+
+    style I1 fill:#5a3d2d,color:#fff
+    style T1 fill:#2d5a3d,color:#fff
+    style T2 fill:#2d4a5a,color:#fff
+    style LLM fill:#2d3a5a,color:#fff
+```
+
+**三个工具**（`src/ai/agents/insight_tools.py`）：
+
+| 工具 | 功能 | 输入 | 输出 |
+|------|------|------|------|
+| `fetch_daily_data` | 查询飞书销售日报表 + 库存预警表 | target_date（YYYY-MM-DD，留空=昨天） | JSON（含 sales_records + inventory_records） |
+| `analyze_daily_data` | LLM 三维度分析（销量/广告/库存） | data_json（fetch_daily_data 返回值） | JSON（含 sales_insight + ad_insight + inventory_insight） |
+| `save_insight_report` | 写回 AI 洞察字段 + 推送日报卡片 | analysis_json（analyze_daily_data 返回值） | JSON（含 updated_records + pushed_to_feishu） |
+
+**LLM 三维度分析输出结构**：
+
+```json
+{
+  "date": "2026-07-27",
+  "sales_insight": {
+    "summary": "销量较昨日上升 15%",
+    "trend": "上升",
+    "anomaly": ""
+  },
+  "ad_insight": {
+    "acos_eval": "ACoS 18%，处于正常区间",
+    "efficiency": "正常"
+  },
+  "inventory_insight": {
+    "health": "关注",
+    "suggestion": "SKU-A 可售天数不足 14 天，建议补货",
+    "risk_items": ["SKU-A"]
+  },
+  "top_priority": "立即补货 SKU-A",
+  "action_items": ["补货 SKU-A", "降低 ACoS", "优化广告投放"]
+}
+```
+
+**PromptManager 数据洞察模板**（`src/ai/prompt_manager.py`）：
+- 集中管理数据洞察 Agent 的 3 个 Prompt：insight_system / insight_analysis / insight_report
+- insight_analysis 是核心模板，指导 LLM 从三维度生成结构化 JSON
+- 与选品 Agent 共用 PromptManager 单例，避免重复初始化
+
+**定时任务接入**（`src/scheduler/tasks.py`）：
+- `daily_report_task` 函数调用 `run_insight_agent()`，每日 18:00 自动触发
+- 失败时记录错误日志，不阻塞调度器
+- 业务用户可在 GUI 数据洞察 Tab 手动重跑
+
+**GUI 双 Tab 设计**（`src/gui/pages/ai_agent_page.py`）：
+- Tab1「选品分析」：原有功能，输入品类一键运行
+- Tab2「数据洞察」：选日期 + 立即运行（绿色主题区分）
+- 共用 API Key 状态提示（顶部右侧）
+- 数据洞察 Tab 默认日期为昨天，支持"📋 设为昨天"快速重置
+
+**日报卡片模板**（`src/feishu/card_templates.py::build_ai_insight_card`）：
+- 三维度概览：销量趋势/广告效率/库存健康（按状态配色 green/blue/orange/red）
+- 异常预警区：销量异常 + 断货风险 SKU（前 3 条）
+- 今日最紧急：单条最紧急事项
+- 行动建议：按优先级排序的前 3 条建议
+- 跳转按钮：点击跳转飞书销售日报表
+
+### 2.9 可观测性模块（src/observability/，v0.5.0 新增）
 
 **LLM 调用监控闭环**：自动记录每次 LLM 调用的耗时、Token、成本，失败率超阈值时飞书告警。
 

@@ -408,11 +408,33 @@ def inventory_check_task() -> int:
 
 
 def daily_report_task() -> None:
-    """日报生成任务（预留）。
+    """数据洞察日报生成任务。
 
-    第4周实现：从多维表格拉取昨日销售数据 → AI 生成日报 → 推送飞书群。
+    每日 18:00 自动执行：
+    1. 调用数据洞察 Agent
+    2. Agent 自动拉取昨日销售数据 + 库存预警数据
+    3. LLM 从销量/广告/库存三维度分析
+    4. 把 AI 洞察写回销售日报表 + 推送日报卡片到飞书群
+
+    失败时不抛异常，仅记录日志（避免阻塞调度器）。
     """
-    logger.info("定时任务 [日报生成] 预留，第4周实现")
+    logger.info("定时任务 [数据洞察日报] 开始执行")
+    try:
+        # 延迟导入避免循环依赖
+        from src.ai.agents.insight_agent import run_insight_agent
+
+        result = run_insight_agent()
+        if result.get("success"):
+            logger.info("定时任务 [数据洞察日报] 执行成功")
+        else:
+            logger.error(
+                f"定时任务 [数据洞察日报] 执行失败: {result.get('error')}"
+            )
+    except Exception as e:
+        # 定时任务异常不能抛出，否则会阻塞调度器
+        logger.error(
+            "定时任务 [数据洞察日报] 异常: {}", str(e), exc_info=True
+        )
 
 
 def data_cleanup_task() -> dict[str, dict[str, int]]:
